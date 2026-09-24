@@ -1,0 +1,71 @@
+# Virtual environment
+.venv/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+
+# Raw / downloaded / huge data (kept offline: multi-GB, per-file above the
+# 100 MB GitHub limit -> do not upload)
+/data/
+/backend/data/
+*.grib
+*.nc
+
+# Top-level experiment plots only (final routing plots live in backend/plots/)
+plots/
+
+# Runtime logs and pid files
+logs/
+*.log
+run.pid
+
+# OS and editor clutter
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Credentials (never commit)
+_netrc
+.cdsapirc
+.copernicusmarine/
+
+# Scratch files (not part of the final project)
+h.py
+polarpath.html
+
+# Old archived experiments / data
+backend/runs/_archive/
+frontend/_archive_2025/
+frontend/_archive_singlehorizon/
+
+# All trained models except the final 3-seed 10ch 3f ensemble actually used
+*.pt
+*.pth
+!backend/runs/final_10ch_3f_seed0/
+!backend/runs/final_10ch_3f_seed0/*.pt
+!backend/runs/final_10ch_3f_seed1/
+!backend/runs/final_10ch_3f_seed1/*.pt
+!backend/runs/final_10ch_3f_seed2/
+!backend/runs/final_10ch_3f_seed2/*.pt
+
+# Oversized model-output array (>100 MB per file; would be rejected by GitHub)
+backend/cache/ensemble_2026.npy
+
+# backend/cache = generated runtime artifacts (routing grids, costs, model
+# ensemble outputs, metrics, routes) consumed by the scripts and the router.
+# Upload only the final-used + routing files; keep experiment/2025 arrays and
+# the oversized ensemble_2026 out.
+backend/cache/*.npy
+!backend/cache/routing_*.npy
+!backend/cache/valid_mask.npy
+!backend/cache/dates_2026.npy
+!backend/cache/true_2026.npy
+!backend/cache/uncertainty_2026.npy
+!backend/cache/confidence_class_2026.npy
+
+# Earlier router variant (final is the non-5b route)
+backend/cache/route_capetown_maitri_2026-01-06_5b.json
+backend/plots/route_validation_5b.png

@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolarPath SIC Forecaster</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;background:#0a0f1a;color:#c9d1d9}
+.layout{display:flex;height:100%}
+.side{width:250px;min-width:250px;background:#0d1117;border-right:1px solid #30363d;padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:14px;flex-shrink:0}
+.side h3{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#8b949e;font-weight:600;margin-bottom:6px}
+.sep{height:1px;background:#30363d}
+.lr{display:flex;align-items:center;gap:3px;margin-bottom:5px}
+.lr input[type=checkbox]{accent-color:#58a6ff;width:13px;height:13px}
+.lr label{font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px;flex:1}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.opr{margin:4px 0 8px 20px;display:flex;align-items:center;gap:6px}
+.opr span{font-size:10px;color:#8b949e;min-width:38px}
+.opr input[type=range]{flex:1;height:3px;accent-color:#58a6ff;cursor:pointer}
+.opr.pred input{accent-color:#3fb950}
+.vw{display:flex;flex-direction:column;gap:5px}
+.vw label{font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.vw input[type=radio]{accent-color:#58a6ff;width:13px;height:13px}
+.drow{display:flex;align-items:center;gap:6px}
+.dnav{background:#21262d;color:#e6edf3;border:none;border-radius:4px;width:24px;height:24px;cursor:pointer;font-size:12px}
+.dnav:hover{background:#30363d}
+#dl{font-size:12px;font-weight:600;color:#58a6ff;flex:1;text-align:center}
+#dsl{width:100%;accent-color:#58a6ff;cursor:pointer;margin-top:6px}
+#pb{width:100%;background:#238636;color:#fff;border:none;border-radius:4px;padding:6px;font-size:11px;cursor:pointer;font-weight:600;margin-top:6px}
+#pb:hover{background:#2ea043}
+.met{font-size:12px;line-height:1.9}
+.met .m{display:flex;justify-content:space-between}
+.met .k{color:#8b949e}
+.met .v{color:#e6edf3;font-weight:600}
+.main{flex:1;position:relative;display:flex;flex-direction:column;min-width:0}
+.maptitle{position:absolute;top:8px;left:8px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:3px;background:rgba(13,17,23,.8);z-index:6}
+.maparea{flex:1;position:relative;margin:4px}
+.maparea svg{width:100%;height:100%;display:block;background:#0b2545;border-radius:6px}
+.sbs{display:none;flex:1;grid-template-columns:1fr 1fr;gap:4px;padding:4px;margin:4px}
+.sbs.on{display:grid}
+.sbs .pane{position:relative;overflow:hidden;background:#0b2545;border-radius:6px}
+.sbs .pane svg{width:100%;height:100%}
+.sbs .plt{position:absolute;top:6px;left:8px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:rgba(13,17,23,.8);z-index:5}
+#tt{position:fixed;pointer-events:none;background:rgba(13,17,23,.95);border:1px solid #30363d;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.6;display:none;z-index:1000;max-width:320px;box-sizing:border-box;backdrop-filter:blur(4px)}
+.tl{color:#8b949e}.tv{color:#e6edf3;font-weight:500}.ctv{color:#e6edf3;font-weight:600}
+  #tt .muted{color:#888;font-style:italic;font-size:11px;margin-top:4px}
+#info{position:absolute;top:48px;right:12px;z-index:8;background:rgba(13,17,23,.96);border:1px solid #30363d;border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.8;min-width:210px;display:none;backdrop-filter:blur(4px)}
+#info h4{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:#8b949e;margin-bottom:4px;font-weight:600}
+#info .irow{display:flex;justify-content:space-between;gap:12px}
+#info .ik{color:#8b949e}
+#info .iv{color:#e6edf3;font-weight:500}
+#info .bar{display:flex;justify-content:space-between;margin-top:4px}
+#ic{background:none;border:none;color:#8b949e;cursor:pointer;font-size:13px}
+#ic:hover{color:#f85149}
+.pp{color:#d29922}
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="side">
+    <h3 style="margin-bottom:0;font-size:13px;color:#e6edf3">PolarPath SIC Forecaster</h3>
+    <div>2026 Test &middot; 30 days</div>
+    <div class="sep"></div>
+
+    <div>
+      <h3>Layers</h3>
+      <div class="lr"><input type="checkbox" id="lk-stations" checked><label for="lk-stations"><span class="dot" style="background:#a0aec0"></span>Stations</label></div>
+      <div class="lr"><input type="checkbox" id="lk-grid" checked><label for="lk-grid"><span class="dot" style="background:#4a7fb5"></span>Grid</label></div>
+      <div class="lr"><input type="checkbox" id="lk-actual" checked><label for="lk-actual"><span class="dot" style="background:#58a6ff"></span>Actual SIC</label></div>
+      <div class="lr"><input type="checkbox" id="lk-predicted" checked><label for="lk-predicted"><span class="dot" style="background:#3fb950"></span>Predicted SIC</label></div>
+    </div>
+
+    <div style="margin-top:8px;border-top:1px solid #30363d;padding-top:8px">
+      <h3>Overlay Legend</h3>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#4CAF50"></span><label style="font-size:11px;color:#8b949e;cursor:default">Green = Actual SIC</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#FF5722"></span><label style="font-size:11px;color:#8b949e;cursor:default">Orange = Predicted SIC</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#0a1628;border:1px solid #3a5a7a"></span><label style="font-size:11px;color:#8b949e;cursor:default">Navy = Open water (both agree)</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#d2b84c"></span><label style="font-size:11px;color:#8b949e;cursor:default">Yellow = Both agree on ice</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#4CAF50"></span><label style="font-size:11px;color:#8b949e;cursor:default">Green only = Model missed ice (under-prediction)</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#FF5722"></span><label style="font-size:11px;color:#8b949e;cursor:default">Orange only = Model false positive (over-prediction)</label></div>
+    </div>
+
+    <div style="margin-top:8px;border-top:1px solid #30363d;padding-top:8px">
+      <h3>Confidence Scale</h3>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#4CAF50"></span><label style="font-size:11px;color:#8b949e;cursor:default">HIGH (std &lt; <span class="ctv" id="conf-p33">?</span>)</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#FFC107"></span><label style="font-size:11px;color:#8b949e;cursor:default">MEDIUM (<span class="ctv" id="conf-p33b">?</span> &ndash; <span class="ctv" id="conf-p66">?</span>)</label></div>
+      <div class="lr" style="margin-bottom:4px"><span class="dot" style="background:#F44336"></span><label style="font-size:11px;color:#8b949e;cursor:default">LOW (std &ge; <span class="ctv" id="conf-p66b">?</span>)</label></div>
+    </div>
+
+    <div>
+      <h3>Opacity</h3>
+      <div class="opr"><span>Actual</span><input type="range" id="op-actual" min="0" max="100" value="80"></div>
+      <div class="opr pred"><span>Pred</span><input type="range" id="op-pred" min="0" max="100" value="80"></div>
+    </div>
+
+    <div>
+      <h3>View</h3>
+      <div class="vw">
+        <label><input type="radio" name="view" value="overlay" checked>Overlay</label>
+        <label><input type="radio" name="view" value="side">Side-by-side</label>
+      </div>
+    </div>
+
+    <div>
+      <h3>Horizon</h3>
+      <div class="vw">
+        <label><input type="radio" name="horizon" value="day1" checked>Day 1</label>
+        <label><input type="radio" name="horizon" value="day2">Day 2</label>
+        <label><input type="radio" name="horizon" value="day3">Day 3</label>
+      </div>
+    </div>
+
+    <div>
+      <h3>Date</h3>
+      <div class="drow">
+        <button class="dnav" id="dprev">&#9664;</button>
+        <div id="dl"></div>
+        <button class="dnav" id="dnext">&#9654;</button>
+      </div>
+      <input type="range" id="dsl" min="0" max="0" value="0">
+      <button id="pb">&#9654; Play</button>
+    </div>
+
+    <div>
+      <h3>Metrics</h3>
+      <div class="met">
+        <div class="m"><span class="k">MIZ RMSE</span><span class="v" id="m-rmse">--</span></div>
+        <div class="m"><span class="k">Coverage</span><span class="v" id="m-cov">--</span></div>
+        <div class="m"><span class="k">IIEE@0.42</span><span class="v" id="m-iiee">--</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="maparea">
+      <div class="maptitle" id="mtitle">Overlay</div>
+      <svg id="map"></svg>
+    </div>
+    <div class="sbs" id="sbs">
+      <div class="pane"><div class="plt" style="color:#58a6ff" id="plt-a">Actual SIC</div><svg id="sbd-a"></svg></div>
+      <div class="pane"><div class="plt" style="color:#3fb950" id="plt-p">Predicted SIC</div><svg id="sbd-p"></svg></div>
+    </div>
+    <div id="info">
+      <h4>Cell Info <button id="ic" title="close">&times;</button></h4>
+      <div class="irow"><span class="ik">Lat</span><span class="iv" id="i-lat">--</span></div>
+      <div class="irow"><span class="ik">Lon</span><span class="iv" id="i-lon">--</span></div>
+      <div class="irow"><span class="ik">Actual SIC</span><span class="iv" id="i-act">--</span></div>
+      <div class="irow"><span class="ik">Predicted SIC</span><span class="iv" id="i-pred">--</span></div>
+      <div class="irow"><span class="ik">Uncertainty (std)</span><span class="iv" id="i-unc">--</span></div>
+      <div class="irow"><span class="ik">Confidence (class)</span><span class="iv" id="i-conf">--</span></div>
+    </div>
+  </div>
+</div>
+<div id="tt"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+var dates = __DATES__;
+var stations = __STATIONS__;
+var coast = __COAST__;
+var hzMetrics = __HORIZON_METRICS__;
+var Q90={miz:0.12617,open:0.00206};
+if(hzMetrics&&hzMetrics.conformal){Q90.miz=hzMetrics.conformal.q90_miz;Q90.open=hzMetrics.conformal.q90_open;}
+
+var ROI={lo:-10,hi:80,la:-75,lb:-50};
+var KEYCOL={actual:"#58a6ff",predicted:"#3fb950",diff:"#f85149",uncertainty:"#d29922"};
+var ci=0,playing=false,tmr=null,view="overlay",stnHover=false,hoverCell=null;
+var hzn="day1",HD={day1:0,day2:1,day3:2},HL={day1:"Day 1",day2:"Day 2",day3:"Day 3"};
+var latA=[],lonA=[],vals=null,infoCell=null,confThr=null;
+var mapSvg,sbsASvg,sbsPSvg,proj,path,mapW,mapH;
+var pins=[];
+
+function init(){
+  mapSvg=d3.select("#map");
+  sbsASvg=d3.select("#sbd-a");
+  sbsPSvg=d3.select("#sbd-p");
+
+  fetch("data/lat.json").then(function(r){return r.json()}).then(function(d){latA=d});
+  fetch("data/lon.json").then(function(r){return r.json()}).then(function(d){lonA=d});
+  fetch("data/confidence_thresholds.json").then(function(r){return r.json()}).then(function(d){
+    confThr=d;
+    function setv(id,v){var el=document.getElementById(id);if(el)el.textContent=v;}
+    setv("conf-p33",confThr.p33.toFixed(4));
+    setv("conf-p33b",confThr.p33.toFixed(4));
+    setv("conf-p66",confThr.p66.toFixed(4));
+    setv("conf-p66b",confThr.p66.toFixed(4));
+  }).catch(function(e){console.warn("confidence_thresholds.json not loaded",e);});
+
+  document.getElementById("dsl").max=dates.length-1;
+  document.getElementById("dl").textContent=dates[0];
+
+  document.querySelectorAll("[id^=lk-]").forEach(function(cb){
+    cb.onchange=function(){render();};
+  });
+  document.getElementById("op-actual").oninput=function(){render();};
+  document.getElementById("op-pred").oninput=function(){render();};
+
+  document.querySelectorAll('input[name=view]').forEach(function(r){
+    r.onchange=function(){setView(r.value);};
+  });
+
+  document.querySelectorAll('input[name=horizon]').forEach(function(r){
+    r.onchange=function(){hzn=r.value;render();updMetrics();};
+  });
+
+  document.getElementById("dprev").onclick=function(){step(-1);};
+  document.getElementById("dnext").onclick=function(){step(1);};
+  document.getElementById("dsl").oninput=function(){ci=+this.value;loadDt();};
+  document.getElementById("pb").onclick=function(){playing?stopP():startP();};
+  document.getElementById("ic").onclick=function(){infoCell=null;updateInfo();};
+
+  loadDt();
+  window.addEventListener("resize",function(){rebuild();});
+}
+
+function step(d){ci=(ci+d+dates.length)%dates.length;document.getElementById("dsl").value=ci;loadDt();}
+function startP(){playing=true;document.getElementById("pb").innerHTML="&#9646;&#9646; Pause";tmr=setInterval(function(){step(1);},250);}
+function stopP(){playing=false;document.getElementById("pb").innerHTML="&#9654; Play";clearInterval(tmr);}
+
+function setView(v){
+  view=v;
+  var isSbs=v==="side";
+  document.getElementById("sbs").classList.toggle("on",isSbs);
+  document.querySelector(".maparea").style.display=isSbs?"none":"";
+  if(isSbs)renderSBS();
+  render();
+}
+
+function getProjection(target){
+  var el=target.node();
+  var rect=el.getBoundingClientRect();
+  var w=rect.width||800,h=rect.height||600;
+  var p=d3.geoEquirectangular();
+  var nw=p([ROI.lo,ROI.lb]),se=p([ROI.hi,ROI.la]);
+  var ww=se[0]-nw[0],wh=se[1]-nw[1];
+  var s=Math.min((w-8)/ww,(h-8)/wh);
+  var cx=nw[0]+ww/2,cy=nw[1]+wh/2;
+  var tx=w/2-cx*s,ty=h/2-cy*s;
+  return{proj:p,path:d3.geoPath().projection(p),w:w,h:h,
+         xf:"translate("+tx+" "+ty+") scale("+s+","+s+")",
+         sx:s,sy:s,tx:tx,ty:ty};
+}
+
+function roiRect(prj){
+  var nw=prj([ROI.lo,ROI.lb]),se=prj([ROI.hi,ROI.la]);
+  return{x:nw[0],y:nw[1],w:se[0]-nw[0],h:se[1]-nw[1]};
+}
+
+function makeClip(defs,id,prj){
+  defs.append("clipPath").attr("id",id)
+    .append("rect").attr("x",roiRect(prj).x).attr("y",roiRect(prj).y)
+    .attr("width",roiRect(prj).w).attr("height",roiRect(prj).h);
+  return "url(#"+id+")";
+}
+
+function drawBase(sel,prj,pth){
+  sel.selectAll(".coast").remove();
+  if(coast&&coast.features){
+    sel.selectAll(".coast").data(coast.features).enter().append("path")
+      .attr("class","coast").attr("d",pth)
+      .attr("fill","#4a5568").attr("stroke","#718096").attr("stroke-width",0.8);
+  }
+  sel.selectAll(".roi").remove();
+  sel.append("path").attr("class","roi")
+    .datum({type:"Feature",geometry:{type:"Polygon",coordinates:[[
+      [ROI.lo,ROI.lb],[ROI.hi,ROI.lb],[ROI.hi,ROI.la],[ROI.lo,ROI.la],[ROI.lo,ROI.lb]]]}})
+    .attr("d",pth).attr("fill","none").attr("stroke","#4a7fb5").attr("stroke-width",1.2)
+    .attr("stroke-dasharray","5,3");
+}
+
+function drawGrid(sel,prj){
+  sel.selectAll(".gridline").remove();
+  if(!document.getElementById("lk-grid").checked)return;
+  var g=sel.append("g").attr("class","gridline");
+  for(var i=0;i<latA.length;i++){
+    var a=prj([ROI.lo,latA[i]]),b=prj([ROI.hi,latA[i]]);
+    g.append("line").attr("x1",a[0]).attr("y1",a[1]).attr("x2",b[0]).attr("y2",b[1])
+      .attr("stroke","#3a5a7a").attr("stroke-width",0.2).attr("opacity",0.5);
+  }
+  for(var j=0;j<lonA.length;j++){
+    var a=prj([lonA[j],ROI.la]),b=prj([lonA[j],ROI.lb]);
+    g.append("line").attr("x1",a[0]).attr("y1",a[1]).attr("x2",b[0]).attr("y2",b[1])
+      .attr("stroke","#3a5a7a").attr("stroke-width",0.2).attr("opacity",0.5);
+  }
+}
+
+function drawStations(sel,prj){
+  sel.selectAll(".stn").remove();
+  if(!document.getElementById("lk-stations").checked)return;
+  var g=sel.append("g").attr("class","stn");
+  stations.forEach(function(s){
+    var pt=prj([s.lon,s.lat]);
+    if(!pt)return;
+    g.append("circle").attr("cx",pt[0]).attr("cy",pt[1])
+      .attr("r",s.highlight?2.4:1.6)
+      .attr("fill",s.highlight?"#f85149":"#a0aec0")
+      .attr("stroke",s.highlight?"#ff7b72":"#cbd5e0").attr("stroke-width",0.5)
+      .on("mousemove",function(e){
+        stnHover=true;
+        var tt=document.getElementById("tt");
+        tt.innerHTML='<span style="color:#ff7b72">&#9679; </span><span class="tv" style="font-weight:600">'+s.name+'</span>'
+          +'<br><span class="tl">Position: </span><span class="tv">'+s.lat.toFixed(2)+'\u00B0, '+s.lon.toFixed(2)+'\u00B0</span>';
+        tt.style.display="block";
+        scheduleTipPos(tt,e);
+      })
+      .on("mouseleave",function(){stnHover=false;document.getElementById("tt").style.display="none";});
+  });
+}
+
+function imgBounds(prj){
+  var tl=prj([ROI.lo,ROI.lb]),br=prj([ROI.hi,ROI.la]);
+  return{x:tl[0],y:tl[1],w:br[0]-tl[0],h:br[1]-tl[1]};
+}
+
+function frameName(layer){return "data/frames/"+dates[ci]+"_"+hzn+"_"+layer+".png";}
+
+function addDays(ds,n){var d=new Date(ds+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
+
+function targetDate(){return addDays(dates[ci],HD[hzn]);}
+
+function drawOverlays(sel,prj,bodyOnly){
+  sel.selectAll(".ov").remove();
+  var ds=dates[ci];
+  var showActual=bodyOnly!=="pred";
+  var showPred=bodyOnly!=="actual";
+  var add=function(layer,op){
+    var b=imgBounds(prj);
+    sel.append("image").attr("class","ov")
+      .attr("href",frameName(layer))
+      .attr("x",b.x).attr("y",b.y).attr("width",b.w).attr("height",b.h)
+      .attr("opacity",op);
+  };
+  var opBase=view==="side"?1.0:0.65;
+  if(showActual&&document.getElementById("lk-actual").checked)
+    add("actual",opBase*(document.getElementById("op-actual").value/100));
+  if(showPred&&document.getElementById("lk-predicted").checked)
+    add("predicted",opBase*(document.getElementById("op-pred").value/100));
+}
+
+function drawPins(sel,prj){
+  sel.selectAll(".pin").remove();
+  pins.forEach(function(p){
+    var pt=prj([p.lon,p.lat]);
+    if(!pt)return;
+    sel.append("circle").attr("class","pin").attr("cx",pt[0]).attr("cy",pt[1])
+      .attr("r",3).attr("fill","none").attr("stroke","#ffffff").attr("stroke-width",1.4);
+  });
+}
+
+function render(){
+  if(view==="side"){renderSBS();return;}
+  var g=getProjection(mapSvg);
+  mapW=g.w;mapH=g.h;proj=g.proj;path=g.path;
+  mapSvg.selectAll("*").remove();
+  document.getElementById("mtitle").textContent="Overlay";
+  var defs=mapSvg.append("defs");
+  var world=mapSvg.append("g").attr("clip-path",makeClip(defs,"mclip",proj)).attr("transform",g.xf);
+  drawBase(world,proj,path);
+  drawOverlays(world,proj,null);
+  drawGrid(world,proj);
+  drawStations(world,proj);
+  drawPins(world,proj);
+  bindMap(mapSvg,g);
+  updInfo();
+}
+
+function updPaneTitles(){
+  var t=targetDate();
+  document.getElementById("plt-a").textContent="Actual SIC · "+t+" ("+HL[hzn]+")";
+  document.getElementById("plt-p").textContent="Predicted SIC · "+t+" ("+HL[hzn]+")";
+}
+
+function renderSBS(){
+  var g1=getProjection(sbsASvg);
+  sbsASvg.selectAll("*").remove();
+  var w1=sbsASvg.append("g").attr("clip-path",makeClip(sbsASvg.append("defs"),"sclipA",g1.proj)).attr("transform",g1.xf);
+  drawBase(w1,g1.proj,g1.path);
+  drawOverlays(w1,g1.proj,"actual");
+  drawGrid(w1,g1.proj);
+  drawStations(w1,g1.proj);
+  drawPins(w1,g1.proj);
+  bindMap(sbsASvg,g1);
+  var g2=getProjection(sbsPSvg);
+  sbsPSvg.selectAll("*").remove();
+  var w2=sbsPSvg.append("g").attr("clip-path",makeClip(sbsPSvg.append("defs"),"sclipP",g2.proj)).attr("transform",g2.xf);
+  drawBase(w2,g2.proj,g2.path);
+  drawOverlays(w2,g2.proj,"pred");
+  drawGrid(w2,g2.proj);
+  drawStations(w2,g2.proj);
+  drawPins(w2,g2.proj);
+  bindMap(sbsPSvg,g2);
+  updPaneTitles();
+}
+
+function rebuild(){render();}
+
+function loadDt(){
+  var ds=dates[ci];
+  document.getElementById("dl").textContent=ds;
+  fetch("data/values/"+ds+".json").then(function(r){return r.json()}).
+    then(function(d){vals=d;render();}).
+    catch(function(){vals=null;render()});
+  updMetrics();
+}
+
+function updMetrics(){
+  var m=hzMetrics&&hzMetrics[hzn];
+  if(!m){["m-rmse","m-cov","m-iiee"].forEach(function(id){document.getElementById(id).textContent="--"});return;}
+  document.getElementById("m-rmse").textContent=m.miz_rmse.toFixed(3);
+  document.getElementById("m-cov").textContent=m.coverage.toFixed(2);
+  document.getElementById("m-iiee").textContent=m.iiee.toFixed(3);
+}
+
+function updInfo(){
+  var box=document.getElementById("info");
+  var cell=infoCell||hoverCell;
+  if(!cell||!vals){box.style.display="none";return;}
+  var li=nearestIdx(latA,cell.lat),lj=nearestIdx(lonA,cell.lon);
+  var lat=latA[li],lon=lonA[lj];
+  var a=valAt("actual",li,lj);
+  var pr=valAt("predicted",li,lj);
+  var u=valAt("uncertainty",li,lj);
+  document.getElementById("i-lat").textContent=lat.toFixed(2)+"\u00B0";
+  document.getElementById("i-lon").textContent=lon.toFixed(2)+"\u00B0";
+  document.getElementById("i-act").textContent=a!==null?a.toFixed(3):"--";
+  var pd=document.getElementById("i-pred");
+  if(pr!==null){
+    var d=pr-a;
+    pd.textContent=pr.toFixed(3)+(a!==null?"  (\u0394 "+d.toFixed(3)+")":"");
+  }else pd.textContent="--";
+  if(u!==null){
+    document.getElementById("i-unc").textContent=u.toFixed(4);
+    var hw=halfWidth(pr);
+    document.getElementById("i-conf").textContent=confLabel(u)+(hw?' (\u00b1'+hw.toFixed(3)+' at 90%)':'');
+  }else{
+    document.getElementById("i-unc").textContent="--";
+    document.getElementById("i-conf").textContent="--";
+  }
+  box.style.display="";
+}
+
+function confLabel(u){
+  if(!confThr) return "...";
+  if(u<confThr.p33) return "HIGH";
+  if(u<confThr.p66) return "MEDIUM";
+  return "LOW";
+}
+function halfWidth(pr){return pr!==null?(pr>0.15?Q90.miz:Q90.open):null;}
+
+function valAt(key,i,j){var o=vals&&vals.horizons&&vals.horizons[hzn];return o&&o[key]&&o[key][i]?o[key][i][j]:null;}
+
+function positionTooltip(tooltip, event) {
+  var OFFSET=12, MARGIN=8;
+  tooltip.style.visibility="hidden";
+  tooltip.style.display="block";
+  var tw=tooltip.offsetWidth, th=tooltip.offsetHeight;
+  var vw=window.innerWidth, vh=window.innerHeight;
+  var left=event.clientX+OFFSET, top=event.clientY+OFFSET;
+  if(left+tw+MARGIN>vw)left=event.clientX-tw-OFFSET;
+  if(top+th+MARGIN>vh)top=event.clientY-th-OFFSET;
+  if(left<MARGIN)left=MARGIN;
+  if(top<MARGIN)top=MARGIN;
+  if(left+tw>vw-MARGIN)left=vw-tw-MARGIN;
+  if(top+th>vh-MARGIN)top=vh-th-MARGIN;
+  tooltip.style.left=left+"px";
+  tooltip.style.top=top+"px";
+  tooltip.style.visibility="visible";
+}
+
+var rafPending=false,lastEvt=null,lastTip=null;
+function scheduleTipPos(tip,e){
+  lastTip=tip;lastEvt=e;
+  if(rafPending)return;
+  rafPending=true;
+  requestAnimationFrame(function(){
+    rafPending=false;
+    if(!lastTip||lastTip.style.display==="none")return;
+    positionTooltip(lastTip,lastEvt);
+  });
+}
+
+function showMinimalTip(e,lat,lon){
+  var tt=document.getElementById("tt");
+  tt.innerHTML='<span class="tl">Position: </span><span class="tv">'+lat.toFixed(2)+'\u00B0, '+lon.toFixed(2)+'\u00B0</span><br>'
+    +'<div class="muted">Land / outside ocean domain</div>';
+  tt.style.display="block";
+  scheduleTipPos(tt,e);
+}
+
+function showTip(e,li,lj){
+  var tt=document.getElementById("tt");
+  var lat=latA[li],lon=lonA[lj];
+  var h='<span class="tl">Position: </span><span class="tv">'+lat.toFixed(2)+'\u00B0, '+lon.toFixed(2)+'\u00B0</span><br>';
+  h+='<span class="tl">Target: </span><span class="tv">'+targetDate()+' ('+HL[hzn]+')</span><br>';
+  var a=valAt("actual",li,lj),pr=valAt("predicted",li,lj),u=valAt("uncertainty",li,lj);
+  if(a!==null)h+='<span style="color:#58a6ff">Actual: </span><span class="tv">'+a.toFixed(4)+'</span><br>';
+  if(pr!==null)h+='<span style="color:#3fb950">Predicted: </span><span class="tv">'+pr.toFixed(4)+'</span><br>';
+  if(u!==null){
+    var hw=halfWidth(pr);
+    var lo=confThr?confThr.p33.toFixed(3):"?";
+    var hi=confThr?confThr.p66.toFixed(3):"?";
+    h+='<span style="color:#d29922">Confidence: </span><span class="tv">'+confLabel(u)+'</span>'
+      +'<span style="color:#8b949e">&nbsp;(std '+u.toFixed(4)+', ice-cell range '+lo+'\u2013'+hi+')</span><br>';
+    if(hw)h+='<span style="color:#8b949e">Interval: </span><span class="tv">\u00b1'+hw.toFixed(3)+' at 90%</span>';
+  }
+  tt.innerHTML=h;tt.style.display="block";
+  scheduleTipPos(tt,e);
+}
+
+function bindMap(sel,g){
+  sel.on("mousemove",function(e){
+    if(!vals||!latA.length||stnHover)return;
+    var rect=sel.node().getBoundingClientRect();
+    var fx=(e.clientX-rect.left),fy=(e.clientY-rect.top);
+    var inv;
+    try{inv=g.proj.invert([(fx-g.tx)/g.sx,(fy-g.ty)/g.sy]);}catch(ex){return;}
+    if(!inv)return;
+    var li=nearestIdx(latA,inv[1]),lj=nearestIdx(lonA,inv[0]);
+    var isLand=valAt("actual",li,lj)===null&&valAt("predicted",li,lj)===null;
+    if(isLand){
+      showMinimalTip(e,latA[li],lonA[lj]);
+      hoverCell=null;
+      if(!infoCell)document.getElementById("info").style.display="none";
+      return;
+    }
+    showTip(e,li,lj);
+    hoverCell={lat:latA[li],lon:lonA[lj]};
+    updInfo();
+  });
+  sel.on("mouseleave",function(){
+    hoverCell=null;
+    document.getElementById("tt").style.display="none";
+    if(!infoCell)document.getElementById("info").style.display="none";
+  });
+  sel.on("click",function(e){
+    if(!vals||!latA.length)return;
+    var rect=sel.node().getBoundingClientRect();
+    var fx=(e.clientX-rect.left),fy=(e.clientY-rect.top);
+    var inv;
+    try{inv=g.proj.invert([(fx-g.tx)/g.sx,(fy-g.ty)/g.sy]);}catch(ex){return;}
+    if(!inv)return;
+    if(inv[0]<ROI.lo-2||inv[0]>ROI.hi+2||inv[1]<ROI.la-2||inv[1]>ROI.lb+2)return;
+    var cli=nearestIdx(latA,inv[1]),clj=nearestIdx(lonA,inv[0]);
+    if(valAt("actual",cli,clj)===null&&valAt("predicted",cli,clj)===null)return;
+    infoCell={lat:inv[1],lon:inv[0]};
+    pins.push({lat:inv[1],lon:inv[0]});
+    if(pins.length>1)pins.shift();
+    render();
+  });
+}
+
+function nearestIdx(arr,v){
+  var b=0,bD=1e9;
+  for(var i=0;i<arr.length;i++){var d=Math.abs(arr[i]-v);if(d<bD){bD=d;b=i;}}
+  return b;
+}
+
+function findNearest(lat,lon){return{lat:latA[nearestIdx(latA,lat)],lon:lonA[nearestIdx(lonA,lon)]};}
+
+init();
+render();
+})();
+</script>
+</body>
+</html>

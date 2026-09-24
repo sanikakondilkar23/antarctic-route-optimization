@@ -1,0 +1,49 @@
+{
+  "per_horizon": {
+    "day1": {
+      "miz_rmse_model": 0.09582771200913624,
+      "miz_rmse_persist": 0.13980884787084727,
+      "ratio": 0.6854195100560448
+    },
+    "day2": {
+      "miz_rmse_model": 0.12646915114115206,
+      "miz_rmse_persist": 0.1401803389082242,
+      "ratio": 0.9021889383785209
+    },
+    "day3": {
+      "miz_rmse_model": 0.14467069861686446,
+      "miz_rmse_persist": 0.13986023644070456,
+      "ratio": 1.0343947808081917
+    }
+  },
+  "iiee": {
+    "t_0.15": {
+      "aggregate": 0.07261050308226888,
+      "over": 10461,
+      "under": 2806,
+      "true_area": 182741.296875
+    },
+    "t_0.42": {
+      "aggregate": 0.05754185375114414,
+      "over": 4912,
+      "under": 4232,
+      "true_area": 158928.59375
+    }
+  },
+  "coverage": {
+    "all_valid": 0.9098910639736453,
+    "miz_only": 0.8802216783916815
+  },
+  "n_samples": 167,
+  "test_window": "2026-01-01 to 2026-06-23",
+  "generalization": {
+    "ratio_2025_day1": 0.69,
+    "ratio_2026_day1": 0.69,
+    "absolute_miz_2025": 0.0823,
+    "absolute_miz_2026": 0.0958,
+    "persistence_2025": 0.1187,
+    "persistence_2026": 0.1398,
+    "note": "2026 is a harder ice season; relative skill preserved"
+  },
+  "iiee_note_2026": "Absolute errors dropped 3x. Ratio to true area rose because Jan-Jun 2026 has ~6.5x less ice-covered area than the full 2025 calendar year."
+}

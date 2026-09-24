@@ -1,0 +1,38 @@
+{
+  "model": "3-frame (10ch, 3-output head), mask-corrected",
+  "mask_fix": "train_valid applied (9963 cells masked out)",
+  "ensemble_miz_day1": 0.08232581522180843,
+  "persistence_miz_day1": 0.11870585432837207,
+  "ratio_vs_persistence": 0.6935278439938881,
+  "iiee_weighted": {
+    "t0.15": {
+      "total": 3.2481272220611572,
+      "over": 3.2334890365600586,
+      "under": 0.014638124965131283
+    },
+    "t0.42": {
+      "total": 0.9652295708656311,
+      "over": 0.9388787150382996,
+      "under": 0.026350753381848335
+    }
+  },
+  "conformal": {
+    "q90_miz": 0.12620098888874054,
+    "q90_open": 0.0020522382110357285,
+    "coverage_all": 0.9034964082605086,
+    "coverage_miz": 0.9589536435483742,
+    "coverage_open": 0.8558748517991864,
+    "width_miz": 0.2524019777774811,
+    "width_open": 0.004104476422071457,
+    "cal_samples": 176,
+    "test_samples": 184
+  },
+  "reliability_open_ocean": {
+    "count": 6756886,
+    "mean_pred": 0.0052043660543859005,
+    "median_pred": 0.00028473144629970193,
+    "p90_pred": 0.0027444553561508656,
+    "fraction_gt_015": 0.01048130751354988,
+    "fraction_gt_030": 0.0021034837645625515
+  }
+}

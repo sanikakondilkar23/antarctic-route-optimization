@@ -1,0 +1,48 @@
+{
+  "grid_shape": [
+    173,
+    369
+  ],
+  "resolution_deg": 0.25,
+  "lat_range": [
+    -75.0,
+    -32.0
+  ],
+  "lon_range": [
+    -10.0,
+    82.0
+  ],
+  "model_band_rows": [
+    0,
+    101
+  ],
+  "extension_band_rows": [
+    101,
+    173
+  ],
+  "model_band_cols": [
+    0,
+    361
+  ],
+  "lon_extension_cols": [
+    361,
+    369
+  ],
+  "notes_lon_domain": "Model outputs cover lon -10..80 only. In the model band (rows 0:101) the columns 80.25..82.0 (lon_extension_cols) are outside the model domain and are NaN/impassable; the extension band (rows 101:173) covers the full lon span.",
+  "cost_terms": {
+    "distance": "implemented",
+    "sic_risk": "implemented",
+    "iceberg_standoff": "deferred - no trajectory predictor yet",
+    "station_standoff_buffer": "deferred - N-nm approach buffer not implemented",
+    "land_mask_extension_band": "deferred - the model ROI valid_mask (from NSIDC CDR v6 NaN cells) is a land mask, but only covers -75 to -50. The extension band (-50 to -32) has no equivalent land mask and is currently assumed all open water. Source a GEBCO-based land mask for that band before trusting routes near Cape Town."
+  },
+  "polaris_multipliers": {
+    "open_water": 1.0,
+    "marginal_ice": 2.0,
+    "moderate_pack": 8.0,
+    "hard_pack": 50.0,
+    "impassable": "inf"
+  },
+  "reference_vessel": "Vasiliy Golovnin class (FESCO ice-class cargo)",
+  "notes": "Multipliers are v1 heuristics informed by Lindqvist ice-resistance curves and FESCO voyage reports. Not a validated POLARIS implementation. DAY1_STAT_IDX verified against known 2026 test MIZ RMSE before trusting output."
+}

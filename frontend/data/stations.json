@@ -1,0 +1,65 @@
+[
+  {
+    "name": "Maitri",
+    "country": "India",
+    "lat": -70.767,
+    "lon": 11.733,
+    "highlight": true
+  },
+  {
+    "name": "Bharati",
+    "country": "India",
+    "lat": -69.397,
+    "lon": 76.247,
+    "highlight": true
+  },
+  {
+    "name": "Neumayer III",
+    "country": "Germany",
+    "lat": -70.667,
+    "lon": 8.267,
+    "highlight": false
+  },
+  {
+    "name": "SANAE IV",
+    "country": "South Africa",
+    "lat": -71.692,
+    "lon": -2.85,
+    "highlight": false
+  },
+  {
+    "name": "Syowa",
+    "country": "Japan",
+    "lat": -69.0,
+    "lon": 39.583,
+    "highlight": false
+  },
+  {
+    "name": "Princess Elisabeth",
+    "country": "Belgium",
+    "lat": -71.95,
+    "lon": 23.35,
+    "highlight": false
+  },
+  {
+    "name": "Troll",
+    "country": "Norway",
+    "lat": -72.012,
+    "lon": 2.533,
+    "highlight": false
+  },
+  {
+    "name": "Kohnen",
+    "country": "Germany",
+    "lat": -75.0,
+    "lon": 0.0,
+    "highlight": false
+  },
+  {
+    "name": "Aboa",
+    "country": "Finland",
+    "lat": -73.05,
+    "lon": 13.417,
+    "highlight": false
+  }
+]
