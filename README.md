@@ -6,6 +6,43 @@ A ConvLSTM ensemble for short-term Antarctic sea-ice concentration (SIC) forecas
 
 The forecaster combines three public data sources — NSIDC CDR v6 satellite SIC, ERA5 atmospheric reanalysis, and CMEMS GLORYS12V1 ocean reanalysis — into a common 0.25° grid. It was trained on 2021–2024 (1,461 days), validated on 2025, and tested on an entirely held-out 2026 window (Jan 1 – Jun 23). The reference metric is the ratio of model MIZ RMSE to persistence MIZ RMSE; on day-1 that ratio is **0.69 in both the 2025 validation and the 2026 test years**, i.e. the model is ~31% better than persistence on day-1 and the skill transfers across years.
 
+## Quickstart: running what ships in this repo
+
+This branch ships the final trained models, the routing grids, the metrics, and all frontend
+assets. The raw satellite/reanalysis downloads (~40 GB) and the regenerable ≥100 MB ensemble
+cache are **not** committed (git ignores them — see the per-file size note in
+`.gitignore`), so the router and the frontend run directly from the committed artifacts.
+
+### Frontend
+
+No build step and no backend process — `frontend/index.html` + `frontend/data/*` are
+pre-generated, static files:
+
+    cd frontend
+    python -m http.server 8000        # open http://localhost:8000
+
+First load needs internet for D3 from the d3js.org CDN (the only external runtime dependency);
+hard-refresh with Ctrl+Shift+R if frames look stale. The viewer shows the 2026 Jan–Jun test
+window for day-1/2/3 horizons, actual-vs-predicted overlay, and confidence/uncertainty info.
+
+### Backend
+
+The A* router reads the committed grids in `backend/cache/` (`routing_sic_2026.npy`,
+`routing_cost_x/y_2026.npy`, `routing_multiplier`, `routing_station_goals.json`, land/override
+masks) and reproduces the validated Cape Town → Maitri route, without any raw data:
+
+    .venv\Scripts\activate            # Windows; Linux/macOS: source .venv/bin/activate
+    python backend/scripts/build_router.py
+    # -> backend/plots/route_validation.png, backend/cache/route_capetown_maitri_2026-01-06.json
+
+All reported numbers are also already committed (`backend/cache/metrics_*.json`,
+`uncertainty_stats.json`, `route_*.json`), so the backend analysis is viewable without running
+any code.
+
+> To regenerate predictions, metrics, or the frontend data from raw observations instead of the
+> committed artifacts, follow **Full reproduction** below — that path downloads ~40 GB of data
+> and rebuilds the excluded `ensemble_2026.npy` cache array.
+
 ## Results Summary
 
 2025 values are loaded from `backend/cache/metrics_2025.json` / `backend/cache/metrics_3frame_2025.json` (mask-fixed 3-frame run); 2026 values from `backend/cache/metrics_2026.json`.
@@ -504,6 +541,12 @@ sic/
 
 ## Reproducing
 
+> **Heads-up:** steps 2–6 below re-download the raw data (~40 GB), rebuild `backend/data/*`,
+> and regenerate the ≥100 MB cache arrays that are gitignored on this branch — they need NSIDC
+> Earthdata credentials, a `~/.cdsapirc` (ERA5), and a Copernicus Marine account. If you only
+> want to run the shipped models, router, and frontend, use the **Quickstart** section above
+> (steps 1 and the frontend serve also work from a fresh clone unchanged).
+
 ### 1. Environment
 
 ```
@@ -555,10 +598,19 @@ python backend/scripts/gate5_2026.py       # → backend/cache/metrics_2026.json
 
 ### 7. Frontend
 
+Build steps (need the data + ensemble cache from steps 2–6; on a fresh clone these
+regenerate what the committed repo already ships):
+
 ```
 python backend/scripts/prep_frontend_data.py --test2026
 python backend/scripts/gen_metrics.py --test2026
 python backend/scripts/write_html.py
+```
+
+Serve (works from the committed assets alone — no data rebuild required):
+
+```
+cd frontend
 python -m http.server 8000          # open http://localhost:8000
 ```
 
