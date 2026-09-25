@@ -19,7 +19,7 @@ Labels:
 """
 
 from dataclasses import dataclass
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -168,13 +168,14 @@ def generate_scenarios(
 def scenario_to_env_fn(
     scenario: Scenario,
     base_grid: EnvironmentalGrid,
+    base_env_fn: Optional[Callable[[float], EnvironmentalGrid]] = None,
 ) -> Callable[[float], EnvironmentalGrid]:
     """
     Convert a static Scenario into an env_fn(t) callable.
 
-    Returns the same scenario grid for all t.  This is the simplest
-    time-varying interface: the scenario represents a single plausible
-    future that holds for the entire voyage duration.
+    If base_env_fn is provided, the scenario perturbation is applied on
+    top of the base env_fn's output at each timestep. Otherwise, the
+    scenario grid is returned for all t (static scenario).
 
     Parameters
     ----------
@@ -182,11 +183,33 @@ def scenario_to_env_fn(
         The scenario to convert.
     base_grid : EnvironmentalGrid
         The base grid (used by scenario.to_grid).
+    base_env_fn : callable, optional
+        Base time-dependent environment function. If provided, the scenario
+        perturbation is applied to env_fn(t) output instead of base_grid.
 
     Returns
     -------
     callable
         env_fn(t) -> EnvironmentalGrid
     """
-    scenario_grid = scenario.to_grid(base_grid)
-    return lambda _t: scenario_grid
+    scenario_replacements = {
+        "sic_mean": scenario.sic,
+        "iceberg_risk": scenario.iceberg_risk,
+    }
+
+    def _apply_replacements(grid: EnvironmentalGrid) -> EnvironmentalGrid:
+        import copy
+        g = copy.copy(grid)
+        for attr, replacement in scenario_replacements.items():
+            if hasattr(g, attr) and getattr(g, attr) is not None:
+                setattr(g, attr, replacement.copy())
+        return g
+
+    if base_env_fn is not None:
+        def env_fn(t: float) -> EnvironmentalGrid:
+            base = base_env_fn(t)
+            return _apply_replacements(base)
+        return env_fn
+    else:
+        scenario_grid = scenario.to_grid(base_grid)
+        return lambda _t: scenario_grid

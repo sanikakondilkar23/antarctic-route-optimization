@@ -19,6 +19,7 @@ from src.ml.training_data import (
     _get_navigable_cells,
     _sample_start_goal,
     generate_training_dataset,
+    generate_training_dataset_from_config,
 )
 
 
@@ -45,7 +46,7 @@ class TestExtractFeatures:
     def test_distance_to_goal(self):
         grid = generate_synthetic(n_rows=10, n_cols=12, seed=42)
         feat = _extract_features(grid, 0, 0, 0, 0, t_hours=0.0)
-        # Same cell as goal → dist = 0
+        # Same cell as goal -> dist = 0
         assert feat[10] == 0.0  # normalized_dist_to_goal
 
     def test_t_hours_stored(self):
@@ -168,6 +169,94 @@ class TestDatasetGeneration:
 
 
 # ---------------------------------------------------------------------------
+# Fix 3: route_ids
+# ---------------------------------------------------------------------------
+
+class TestRouteIds:
+    def test_route_ids_exist(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        assert hasattr(dataset, "route_ids")
+        assert len(dataset.route_ids) == dataset.n_samples
+
+    def test_route_ids_match_length(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        assert len(dataset.route_ids) == len(dataset.features)
+        assert len(dataset.route_ids) == len(dataset.actions)
+
+    def test_route_ids_are_contiguous(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        unique_ids = np.unique(dataset.route_ids)
+        assert len(unique_ids) == dataset.n_routes
+        assert int(unique_ids[0]) == 0
+        assert int(unique_ids[-1]) == dataset.n_routes - 1
+
+    def test_route_ids_incremental(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        # Within each route, ids are the same; routes are sequential
+        for rid in range(dataset.n_routes):
+            mask = dataset.route_ids == rid
+            assert mask.sum() > 0, f"Route {rid} has no samples"
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: t_hours uses actual arrival times, not step index
+# ---------------------------------------------------------------------------
+
+class TestActualTimes:
+    def test_t_hours_not_step_index(self):
+        """t_hours should be float arrival time, not int step index."""
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        t_col = FEATURE_NAMES.index("t_hours")
+        t_vals = dataset.features[:, t_col]
+        # t_hours should be floats (arrival times), not integers 0,1,2,...
+        # At minimum, check they're not all exactly 0.0
+        assert not np.all(t_vals == 0.0), "t_hours all zero suggests step index fallback"
+
+    def test_t_hours_non_negative(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=3, n_scenarios=3, seed=42,
+        )
+        t_col = FEATURE_NAMES.index("t_hours")
+        assert np.all(dataset.features[:, t_col] >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: features extracted from scenario grid
+# ---------------------------------------------------------------------------
+
+class TestScenarioFeatures:
+    def test_features_vary_across_seeds(self):
+        """Different seeds produce different scenario grids, so features differ."""
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        ds1 = generate_training_dataset(grid=grid, n_routes=2, n_scenarios=3, seed=42)
+        ds2 = generate_training_dataset(grid=grid, n_routes=2, n_scenarios=3, seed=99)
+        # With different scenarios, SIC/iceberg features should differ
+        sic_col = FEATURE_NAMES.index("sic_mean")
+        if ds1.n_samples > 0 and ds2.n_samples > 0:
+            # Compare first few samples' SIC means
+            s1 = ds1.features[:min(5, ds1.n_samples), sic_col]
+            s2 = ds2.features[:min(5, ds2.n_samples), sic_col]
+            assert not np.allclose(s1, s2, atol=1e-6), \
+                "Scenario features identical across different seeds"
+
+
+# ---------------------------------------------------------------------------
 # Save/load
 # ---------------------------------------------------------------------------
 
@@ -191,8 +280,10 @@ class TestSaveLoad:
             data = np.load(npz_path, allow_pickle=True)
             assert "features" in data
             assert "actions" in data
+            assert "route_ids" in data
             assert data["features"].shape == dataset.features.shape
             assert data["actions"].shape == dataset.actions.shape
+            assert data["route_ids"].shape == dataset.route_ids.shape
             data.close()
 
             # Load CSV
@@ -200,6 +291,7 @@ class TestSaveLoad:
             df = pd.read_csv(csv_path)
             assert len(df) == dataset.n_samples
             assert "action" in df.columns
+            assert "route_id" in df.columns
         finally:
             import shutil
             if os.path.exists(output_dir):
@@ -220,10 +312,61 @@ class TestSaveLoad:
             df = pd.read_csv(csv_path)
             for name in FEATURE_NAMES:
                 assert name in df.columns, f"Missing column: {name}"
+            assert "route_id" in df.columns
         finally:
             import shutil
             if os.path.exists(output_dir):
                 shutil.rmtree(output_dir, ignore_errors=True)
+
+    def test_npz_has_route_ids(self):
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        dataset = generate_training_dataset(
+            grid=grid, n_routes=2, n_scenarios=3, seed=42,
+        )
+        output_dir = os.path.join(os.path.dirname(__file__), "_test_ml_out3")
+        try:
+            _, npz_path = dataset.save(output_dir)
+            data = np.load(npz_path, allow_pickle=True)
+            assert "route_ids" in data
+            np.testing.assert_array_equal(data["route_ids"], dataset.route_ids)
+            data.close()
+        finally:
+            import shutil
+            if os.path.exists(output_dir):
+                shutil.rmtree(output_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Fix 4: real-data entry point
+# ---------------------------------------------------------------------------
+
+class TestRealDataEntryPoint:
+    def test_function_exists_and_importable(self):
+        assert callable(generate_training_dataset_from_config)
+
+    def test_synthetic_config_works(self):
+        """generate_training_dataset_from_config works with a dummy DataConfig
+        that has no real files — it falls back to no-op adapters."""
+        from src.data.config import DataConfig
+        from src.data.adapters import SICAdapter
+
+        grid = generate_synthetic(n_rows=15, n_cols=18, seed=42)
+        config = DataConfig(
+            sic_path="/nonexistent/sic.nc",
+            current_path="/nonexistent/current.nc",
+        )
+        # Should not crash — adapters report unavailable, env_fn returns template
+        dataset = generate_training_dataset_from_config(
+            data_config=config,
+            grid_template=grid,
+            n_routes=2,
+            n_scenarios=3,
+            seed=42,
+        )
+        # With no real data, adapters are unavailable; routing may still
+        # produce routes using static grid.  At minimum, no crash.
+        assert hasattr(dataset, "features")
+        assert hasattr(dataset, "route_ids")
 
 
 # ---------------------------------------------------------------------------

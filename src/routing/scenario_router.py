@@ -81,6 +81,8 @@ class CVaRResult:
 
     # Candidate route that was selected
     selected_path: List[Tuple[int, int]]
+    selected_times: List[float]           # cumulative arrival times per step
+    selected_scenario_grid: Optional[EnvironmentalGrid]  # grid the route was optimized for
     selected_cost_mean: float
     selected_cvar: float
     selected_var: float
@@ -88,6 +90,7 @@ class CVaRResult:
 
     # Per-candidate metrics (keyed by scenario_id of the scenario that generated the route)
     candidate_paths: Dict[int, List[Tuple[int, int]]]
+    candidate_times: Dict[int, List[float]]  # per-candidate arrival times
     candidate_costs: Dict[int, List[float]]  # candidate_id -> costs across all scenarios
     candidate_cvar: Dict[int, float]
     candidate_mean: Dict[int, float]
@@ -338,6 +341,7 @@ def evaluate_scenarios_td(
     goal: Tuple[int, int],
     weights: Optional[CostWeights] = None,
     vessel_speed_knots: float = 12.0,
+    env_fn: Optional[Callable] = None,
 ) -> Dict[int, TDRouteResult]:
     """
     Run TD-A* on each scenario and return the per-scenario results.
@@ -354,6 +358,10 @@ def evaluate_scenarios_td(
         Cost weights.
     vessel_speed_knots : float
         Vessel speed in knots.
+    env_fn : callable, optional
+        Base time-dependent environment function. If provided, scenario
+        env_fns are composed on top (scenario perturbation applied after
+        the base env_fn). If None, scenarios use static base_grid.
 
     Returns
     -------
@@ -365,12 +373,12 @@ def evaluate_scenarios_td(
 
     results: Dict[int, TDRouteResult] = {}
     for scenario in scenarios:
-        env_fn = scenario_to_env_fn(scenario, base_grid)
+        scenario_env_fn = scenario_to_env_fn(scenario, base_grid, base_env_fn=env_fn)
         result = td_astar(
             base_grid, start, goal,
             weights=weights,
             vessel_speed_knots=vessel_speed_knots,
-            env_fn=env_fn,
+            env_fn=scenario_env_fn,
         )
         results[scenario.scenario_id] = result
 
@@ -389,6 +397,7 @@ def select_robust_route(
     weights: Optional[CostWeights] = None,
     alpha: float = 0.05,
     vessel_speed_knots: float = 12.0,
+    env_fn: Optional[Callable] = None,
 ) -> CVaRResult:
     """
     Scenario-based CVaR route selection.
@@ -419,6 +428,9 @@ def select_robust_route(
         CVaR confidence level in (0, 1].
     vessel_speed_knots : float
         Vessel speed in knots.
+    env_fn : callable, optional
+        Base time-dependent environment function. If provided, scenario
+        env_fns are composed on top. If None, scenarios use static base_grid.
 
     Returns
     -------
@@ -433,25 +445,33 @@ def select_robust_route(
     # Step 1: Generate one candidate route per scenario via TD-A*
     td_results = evaluate_scenarios_td(
         base_grid, scenarios, start, goal, weights, vessel_speed_knots,
+        env_fn=env_fn,
     )
 
     # Collect successful candidate routes
     candidate_paths: Dict[int, List[Tuple[int, int]]] = {}
+    candidate_times: Dict[int, List[float]] = {}
+    scenario_grids: Dict[int, EnvironmentalGrid] = {}
     for scenario in scenarios:
         sid = scenario.scenario_id
         if td_results[sid].success:
             candidate_paths[sid] = td_results[sid].path
+            candidate_times[sid] = td_results[sid].times
+            scenario_grids[sid] = scenario.to_grid(base_grid)
 
     # If no candidates succeeded, fall back to deterministic
     if not candidate_paths:
         det_result = astar(base_grid, start, goal, weights=weights)
         return CVaRResult(
             selected_path=det_result.path if det_result.success else [],
+            selected_times=[],
+            selected_scenario_grid=None,
             selected_cost_mean=det_result.total_cost if det_result.success else float("inf"),
             selected_cvar=float("inf"),
             selected_var=float("inf"),
             selected_worst_case=float("inf"),
             candidate_paths={},
+            candidate_times={},
             candidate_costs={},
             candidate_cvar={},
             candidate_mean={},
@@ -506,11 +526,14 @@ def select_robust_route(
 
     return CVaRResult(
         selected_path=candidate_paths[best_id],
+        selected_times=candidate_times[best_id],
+        selected_scenario_grid=scenario_grids[best_id],
         selected_cost_mean=candidate_mean[best_id],
         selected_cvar=best_cvar,
         selected_var=best_var,
         selected_worst_case=max(best_costs),
         candidate_paths=candidate_paths,
+        candidate_times=candidate_times,
         candidate_costs=candidate_costs,
         candidate_cvar=candidate_cvar,
         candidate_mean=candidate_mean,

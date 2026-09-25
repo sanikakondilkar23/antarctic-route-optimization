@@ -215,16 +215,16 @@ class TestSICAdapter:
         assert not np.allclose(result_t0.sic_mean, result_t24.sic_mean)
 
     def test_unavailable_adapter(self):
-        """Unavailable adapter returns zero SIC."""
+        """Unavailable adapter returns NaN SIC (not zero — missing ≠ open water)."""
         adapter = SICAdapter(path="/nonexistent/sic.nc")
         assert not adapter.is_available()
 
         grid = _make_grid_template()
         result = adapter.load(t_hours=0.0, grid_template=grid)
-        assert np.allclose(result.sic_mean, 0.0)
+        assert np.all(np.isnan(result.sic_mean))
 
     def test_sic_clipped_to_range(self, tmp_path):
-        """SIC values are clipped to [0, 1]."""
+        """SIC values outside [0, 1] are set to NaN (invalid, not silently clipped)."""
         sic_file = tmp_path / "sic.nc"
         # Create SIC with out-of-range values
         lat = np.linspace(-70, -69.5, 5)
@@ -238,7 +238,8 @@ class TestSICAdapter:
         adapter = SICAdapter(path=str(sic_file))
         grid = _make_grid_template(n_rows=5, n_cols=5)
         result = adapter.load(t_hours=0.0, grid_template=grid)
-        assert (result.sic_mean <= 1.0).all()
+        # Out-of-range values become NaN, not clipped
+        assert np.all(np.isnan(result.sic_mean))
 
 
 # ---------------------------------------------------------------------------

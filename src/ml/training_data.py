@@ -87,6 +87,7 @@ class TrainingDataset:
 
     features: np.ndarray         # (N, N_FEATURES) float32
     actions: np.ndarray          # (N,) int32 — action index 0-7
+    route_ids: np.ndarray        # (N,) int32 — route identifier
     feature_names: List[str]
     action_map: Dict[str, int]
     n_routes: int
@@ -109,6 +110,7 @@ class TrainingDataset:
         import pandas as pd
         df = pd.DataFrame(self.features, columns=self.feature_names)
         df["action"] = self.actions
+        df["route_id"] = self.route_ids
         csv_path = os.path.join(output_dir, "route_training_dataset.csv")
         df.to_csv(csv_path, index=False)
 
@@ -119,6 +121,7 @@ class TrainingDataset:
                 f,
                 features=self.features,
                 actions=self.actions,
+                route_ids=self.route_ids,
                 feature_names=np.array(self.feature_names),
                 n_routes=self.n_routes,
                 n_samples=self.n_samples,
@@ -281,6 +284,7 @@ def generate_training_dataset(
 
     all_features: List[np.ndarray] = []
     all_actions: List[int] = []
+    all_route_ids: List[int] = []
     n_success = 0
     n_attempts = 0
     max_attempts = n_routes * 5
@@ -311,8 +315,13 @@ def generate_training_dataset(
             continue
 
         path = result.selected_path
+        times = result.selected_times
+        scenario_grid = result.selected_scenario_grid
         if len(path) < min_route_length:
             continue
+
+        # Use scenario grid for feature extraction (Fix 1)
+        feat_grid = scenario_grid if scenario_grid is not None else grid
 
         # Extract (features, action) for each step
         for i in range(len(path) - 1):
@@ -325,12 +334,16 @@ def generate_training_dataset(
             if action_key not in ACTION_TO_INDEX:
                 continue  # skip invalid actions (shouldn't happen)
 
+            # Use actual cumulative arrival time (Fix 2)
+            t_hours = times[i] if i < len(times) else (times[-1] if times else 0.0)
+
             features = _extract_features(
-                grid, r, c, goal[0], goal[1],
-                t_hours=float(i),
+                feat_grid, r, c, goal[0], goal[1],
+                t_hours=t_hours,
             )
             all_features.append(features)
             all_actions.append(ACTION_TO_INDEX[action_key])
+            all_route_ids.append(n_success)
 
         n_success += 1
 
@@ -338,13 +351,16 @@ def generate_training_dataset(
     if all_features:
         features_arr = np.stack(all_features, axis=0)
         actions_arr = np.array(all_actions, dtype=np.int32)
+        route_ids_arr = np.array(all_route_ids, dtype=np.int32)
     else:
         features_arr = np.zeros((0, N_FEATURES), dtype=np.float32)
         actions_arr = np.zeros((0,), dtype=np.int32)
+        route_ids_arr = np.zeros((0,), dtype=np.int32)
 
     dataset = TrainingDataset(
         features=features_arr,
         actions=actions_arr,
+        route_ids=route_ids_arr,
         feature_names=FEATURE_NAMES.copy(),
         action_map={str(k): v for k, v in ACTION_TO_INDEX.items()},
         n_routes=n_success,
@@ -358,6 +374,156 @@ def generate_training_dataset(
             "grid_rows": grid.n_rows,
             "grid_cols": grid.n_cols,
             "n_navigable_cells": int(grid.navigable.sum()),
+        },
+    )
+
+    if output_dir:
+        dataset.save(output_dir)
+
+    return dataset
+
+
+# ---------------------------------------------------------------------------
+# Real-data entry point
+# ---------------------------------------------------------------------------
+
+def generate_training_dataset_from_config(
+    data_config,
+    grid_template: EnvironmentalGrid,
+    n_routes: int = 50,
+    n_scenarios: int = 5,
+    alpha: float = 0.05,
+    vessel_speed_knots: float = 12.0,
+    seed: int = 42,
+    min_route_length: int = 3,
+    output_dir: Optional[str] = None,
+) -> TrainingDataset:
+    """
+    Generate a supervised training dataset from real data via DataConfig.
+
+    Uses the existing DataConfig / build_env_fn architecture to create
+    time-dependent environment functions, then runs the expert CVaR
+    optimizer on each route.
+
+    Parameters
+    ----------
+    data_config : DataConfig
+        Configuration specifying dataset paths and adapter parameters.
+    grid_template : EnvironmentalGrid
+        Template grid defining shape, lat/lon, navigability.
+    n_routes : int
+        Number of expert routes to generate.
+    n_scenarios : int
+        Scenarios per route (for CVaR selection).
+    alpha : float
+        CVaR confidence level.
+    vessel_speed_knots : float
+        Vessel speed.
+    seed : int
+        Random seed.
+    min_route_length : int
+        Minimum route length (in steps) to include.
+    output_dir : str, optional
+        If provided, save CSV and NPZ to this directory.
+
+    Returns
+    -------
+    TrainingDataset
+    """
+    from src.data.builder import build_env_fn
+
+    env_fn = build_env_fn(data_config, grid_template)
+    weights = CostWeights()
+    rng = np.random.RandomState(seed)
+    nav_cells = _get_navigable_cells(grid_template)
+
+    all_features: List[np.ndarray] = []
+    all_actions: List[int] = []
+    all_route_ids: List[int] = []
+    n_success = 0
+    n_attempts = 0
+    max_attempts = n_routes * 5
+
+    while n_success < n_routes and n_attempts < max_attempts:
+        n_attempts += 1
+
+        pair = _sample_start_goal(nav_cells, rng, min_dist=5.0)
+        if pair is None:
+            continue
+        start, goal = pair
+
+        scenarios = generate_scenarios(
+            grid_template, n_scenarios=n_scenarios, seed=seed + n_attempts,
+        )
+
+        try:
+            result = select_robust_route(
+                grid_template, scenarios, start, goal,
+                weights=weights,
+                alpha=alpha,
+                vessel_speed_knots=vessel_speed_knots,
+                env_fn=env_fn,
+            )
+        except Exception:
+            continue
+
+        path = result.selected_path
+        times = result.selected_times
+        scenario_grid = result.selected_scenario_grid
+        if len(path) < min_route_length:
+            continue
+
+        feat_grid = scenario_grid if scenario_grid is not None else grid_template
+
+        for i in range(len(path) - 1):
+            r, c = path[i]
+            r_next, c_next = path[i + 1]
+            dr = r_next - r
+            dc = c_next - c
+
+            action_key = (dr, dc)
+            if action_key not in ACTION_TO_INDEX:
+                continue
+
+            t_hours = times[i] if i < len(times) else (times[-1] if times else 0.0)
+
+            features = _extract_features(
+                feat_grid, r, c, goal[0], goal[1],
+                t_hours=t_hours,
+            )
+            all_features.append(features)
+            all_actions.append(ACTION_TO_INDEX[action_key])
+            all_route_ids.append(n_success)
+
+        n_success += 1
+
+    if all_features:
+        features_arr = np.stack(all_features, axis=0)
+        actions_arr = np.array(all_actions, dtype=np.int32)
+        route_ids_arr = np.array(all_route_ids, dtype=np.int32)
+    else:
+        features_arr = np.zeros((0, N_FEATURES), dtype=np.float32)
+        actions_arr = np.zeros((0,), dtype=np.int32)
+        route_ids_arr = np.zeros((0,), dtype=np.int32)
+
+    dataset = TrainingDataset(
+        features=features_arr,
+        actions=actions_arr,
+        route_ids=route_ids_arr,
+        feature_names=FEATURE_NAMES.copy(),
+        action_map={str(k): v for k, v in ACTION_TO_INDEX.items()},
+        n_routes=n_success,
+        n_samples=len(all_actions),
+        n_scenarios_per_route=n_scenarios,
+        seed=seed,
+        metadata={
+            "alpha": alpha,
+            "vessel_speed_knots": vessel_speed_knots,
+            "min_route_length": min_route_length,
+            "grid_rows": grid_template.n_rows,
+            "grid_cols": grid_template.n_cols,
+            "n_navigable_cells": int(grid_template.navigable.sum()),
+            "data_source": "real_data_config",
         },
     )
 
