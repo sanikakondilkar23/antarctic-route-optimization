@@ -1,0 +1,13 @@
+{
+  "current_position": [
+    10,
+    10
+  ],
+  "selected_action": 7,
+  "confidence": 0.0010333028621971607,
+  "decision_source": "safe_fallback",
+  "ml_fallback_used": true,
+  "environment_updated": true,
+  "safety_validation": true,
+  "note": "Demo dynamic re-routing controller. Real deployment must replace demo arrays with the actual SIC, iceberg and CMEMS environment."
+}

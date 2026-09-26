@@ -1,0 +1,50 @@
+{
+  "model": "outputs\\ml\\route_policy.pt",
+  "dataset": "outputs\\ml\\route_training_dataset.npz",
+  "n_samples": 523,
+  "n_features": 16,
+  "n_actions": 8,
+  "validation_dataset_accuracy": 0.8413001912045889,
+  "mean_prediction_confidence": 0.7937028408050537,
+  "min_prediction_confidence": 0.3575199544429779,
+  "max_prediction_confidence": 0.9999986886978149,
+  "feature_names": [
+    "sic_mean",
+    "sic_uncertainty",
+    "iceberg_risk",
+    "iceberg_risk_uncertainty",
+    "iceberg_uncertainty",
+    "wind_cost",
+    "current_cost",
+    "current_uo",
+    "current_vo",
+    "depth",
+    "normalized_dist_to_goal",
+    "rel_row_to_goal",
+    "rel_col_to_goal",
+    "t_hours",
+    "n_rows",
+    "n_cols"
+  ],
+  "action_distribution_true": {
+    "0": 65,
+    "1": 40,
+    "2": 76,
+    "3": 102,
+    "4": 73,
+    "5": 69,
+    "6": 34,
+    "7": 64
+  },
+  "action_distribution_predicted": {
+    "0": 60,
+    "1": 44,
+    "2": 74,
+    "3": 112,
+    "4": 78,
+    "5": 60,
+    "6": 48,
+    "7": 47
+  },
+  "safety_note": "ML policy is an expert-policy predictor. It must be validated against navigability, SIC, iceberg risk, current effects and robust/CVaR routing before deployment."
+}

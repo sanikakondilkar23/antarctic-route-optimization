@@ -1,0 +1,36 @@
+{
+  "start": [
+    2,
+    2
+  ],
+  "goal": [
+    35,
+    45
+  ],
+  "success": true,
+  "route_length": 56.669048,
+  "total_cost": 96.15011,
+  "expanded_nodes": 3138,
+  "elapsed_ms": 120.35,
+  "num_waypoints": 44,
+  "weights": {
+    "w_sic": 1.0,
+    "w_ice": 1.0,
+    "w_wind": 1.0,
+    "w_curr": 1.0,
+    "w_distance": 1.0
+  },
+  "route_metrics": {
+    "sic_min": 0.046154,
+    "sic_mean": 0.404441,
+    "sic_max": 0.807692,
+    "iceberg_mean": 0.058793,
+    "wind_mean": 0.406818,
+    "current_mean": -0.08015
+  },
+  "grid_shape": [
+    40,
+    50
+  ],
+  "seed": 42
+}

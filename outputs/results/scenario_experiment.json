@@ -1,0 +1,384 @@
+{
+  "label": "Synthetic uncertainty experiment -- NOT real Antarctic forecast uncertainty",
+  "seed": 42,
+  "n_scenarios": 20,
+  "start": [
+    2,
+    2
+  ],
+  "goal": [
+    35,
+    45
+  ],
+  "scenario_generation": {
+    "method": "Gaussian perturbation + clipping to [0,1]",
+    "sic_scale": 1.0,
+    "iceberg_scale": 1.0,
+    "sic_uncertainty_range": "dimensionless [0,1]",
+    "iceberg_risk_uncertainty_range": "dimensionless [0,0.3]"
+  },
+  "clipping_analysis": {
+    "sic": {
+      "clipped_low_frac": 0.07687,
+      "clipped_high_frac": 0.01831,
+      "max_excess": 0.490253,
+      "mean_excess": 0.00464
+    },
+    "iceberg": {
+      "clipped_low_frac": 0.31209,
+      "clipped_high_frac": 0.0104,
+      "max_excess": 0.581695,
+      "mean_excess": 0.015593
+    }
+  },
+  "controlled_sweep": {
+    "zero": {
+      "sic_scale": 0.0,
+      "iceberg_scale": 0.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 96.15011,
+      "cost_std": 0.0,
+      "mean_jaccard": 1.0,
+      "mean_coverage": 1.0,
+      "mean_regret": 0.0,
+      "max_regret": 0.0,
+      "n_routes_differ": 0,
+      "n_scenarios": 20
+    },
+    "sic_only": {
+      "sic_scale": 1.0,
+      "iceberg_scale": 0.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 94.627647,
+      "cost_std": 0.399721,
+      "mean_jaccard": 0.19884,
+      "mean_coverage": 0.302273,
+      "mean_regret": 1.452922,
+      "max_regret": 2.546556,
+      "n_routes_differ": 20,
+      "n_scenarios": 20
+    },
+    "iceberg_only": {
+      "sic_scale": 0.0,
+      "iceberg_scale": 1.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 96.260584,
+      "cost_std": 0.168813,
+      "mean_jaccard": 0.344725,
+      "mean_coverage": 0.45,
+      "mean_regret": 0.416112,
+      "max_regret": 0.886602,
+      "n_routes_differ": 20,
+      "n_scenarios": 20
+    },
+    "both": {
+      "sic_scale": 1.0,
+      "iceberg_scale": 1.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 94.987714,
+      "cost_std": 0.390035,
+      "mean_jaccard": 0.215647,
+      "mean_coverage": 0.319318,
+      "mean_regret": 1.619442,
+      "max_regret": 3.15933,
+      "n_routes_differ": 20,
+      "n_scenarios": 20
+    }
+  },
+  "scale_sweep": [
+    {
+      "scale": 0.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 96.15011,
+      "cost_std": 0.0,
+      "mean_jaccard": 1.0,
+      "mean_regret": 0.0,
+      "n_routes_differ": 0
+    },
+    {
+      "scale": 0.25,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 96.006552,
+      "cost_std": 0.158489,
+      "mean_jaccard": 0.436456,
+      "mean_regret": 0.196398,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 0.5,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 95.736724,
+      "cost_std": 0.241393,
+      "mean_jaccard": 0.322535,
+      "mean_regret": 0.562424,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 0.75,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 95.394222,
+      "cost_std": 0.316827,
+      "mean_jaccard": 0.227758,
+      "mean_regret": 1.041723,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 1.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 94.987714,
+      "cost_std": 0.390035,
+      "mean_jaccard": 0.215647,
+      "mean_regret": 1.619442,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 1.5,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 94.212604,
+      "cost_std": 0.562608,
+      "mean_jaccard": 0.168186,
+      "mean_regret": 2.877882,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 2.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 93.650175,
+      "cost_std": 0.710162,
+      "mean_jaccard": 0.128171,
+      "mean_regret": 4.038186,
+      "n_routes_differ": 20
+    },
+    {
+      "scale": 3.0,
+      "det_cost": 96.15011,
+      "mean_scenario_cost": 93.107102,
+      "cost_std": 1.051759,
+      "mean_jaccard": 0.128768,
+      "mean_regret": 5.90058,
+      "n_routes_differ": 20
+    }
+  ],
+  "deterministic_route": {
+    "route_length": 56.669048,
+    "total_cost": 96.15011,
+    "sic_mean": 0.404441,
+    "iceberg_mean": 0.058793,
+    "wind_mean": 0.406818,
+    "current_mean": -0.08015
+  },
+  "aggregate": {
+    "mean_scenario_route_length": 56.669048,
+    "mean_scenario_optimal_cost": 94.987714,
+    "cost_std": 0.390035,
+    "mean_regret": 1.619442,
+    "median_regret": 1.699364,
+    "p90_regret": 2.544735,
+    "max_regret": 3.15933,
+    "mean_jaccard_overlap": 0.215647,
+    "mean_route_coverage": 0.319318,
+    "scenarios_with_different_route": 20
+  },
+  "per_scenario": [
+    {
+      "scenario_id": 0,
+      "route_found": true,
+      "scenario_optimal_cost": 95.238578,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 97.224987,
+      "jaccard_overlap": 0.294118,
+      "route_coverage": 0.454545,
+      "regret": 1.986409
+    },
+    {
+      "scenario_id": 1,
+      "route_found": true,
+      "scenario_optimal_cost": 95.350512,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.999018,
+      "jaccard_overlap": 0.128205,
+      "route_coverage": 0.227273,
+      "regret": 1.648505
+    },
+    {
+      "scenario_id": 2,
+      "route_found": true,
+      "scenario_optimal_cost": 95.039486,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 95.844273,
+      "jaccard_overlap": 0.313433,
+      "route_coverage": 0.477273,
+      "regret": 0.804787
+    },
+    {
+      "scenario_id": 3,
+      "route_found": true,
+      "scenario_optimal_cost": 95.474185,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.976887,
+      "jaccard_overlap": 0.157895,
+      "route_coverage": 0.272727,
+      "regret": 1.502702
+    },
+    {
+      "scenario_id": 4,
+      "route_found": true,
+      "scenario_optimal_cost": 94.704966,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 97.209772,
+      "jaccard_overlap": 0.173333,
+      "route_coverage": 0.295455,
+      "regret": 2.504806
+    },
+    {
+      "scenario_id": 5,
+      "route_found": true,
+      "scenario_optimal_cost": 94.880458,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.740085,
+      "jaccard_overlap": 0.157895,
+      "route_coverage": 0.272727,
+      "regret": 1.859626
+    },
+    {
+      "scenario_id": 6,
+      "route_found": true,
+      "scenario_optimal_cost": 95.41517,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.131916,
+      "jaccard_overlap": 0.035294,
+      "route_coverage": 0.068182,
+      "regret": 0.716746
+    },
+    {
+      "scenario_id": 7,
+      "route_found": true,
+      "scenario_optimal_cost": 94.432909,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.162395,
+      "jaccard_overlap": 0.113924,
+      "route_coverage": 0.204545,
+      "regret": 1.729487
+    },
+    {
+      "scenario_id": 8,
+      "route_found": true,
+      "scenario_optimal_cost": 94.83506,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 97.739159,
+      "jaccard_overlap": 0.113924,
+      "route_coverage": 0.204545,
+      "regret": 2.904098
+    },
+    {
+      "scenario_id": 9,
+      "route_found": true,
+      "scenario_optimal_cost": 94.328538,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 94.970436,
+      "jaccard_overlap": 0.660377,
+      "route_coverage": 0.795455,
+      "regret": 0.641898
+    },
+    {
+      "scenario_id": 10,
+      "route_found": true,
+      "scenario_optimal_cost": 94.924632,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 97.167661,
+      "jaccard_overlap": 0.035294,
+      "route_coverage": 0.068182,
+      "regret": 2.243029
+    },
+    {
+      "scenario_id": 11,
+      "route_found": true,
+      "scenario_optimal_cost": 95.254236,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 98.413566,
+      "jaccard_overlap": 0.173333,
+      "route_coverage": 0.295455,
+      "regret": 3.15933
+    },
+    {
+      "scenario_id": 12,
+      "route_found": true,
+      "scenario_optimal_cost": 95.264798,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 95.429047,
+      "jaccard_overlap": 0.833333,
+      "route_coverage": 0.909091,
+      "regret": 0.16425
+    },
+    {
+      "scenario_id": 13,
+      "route_found": true,
+      "scenario_optimal_cost": 94.61722,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.832599,
+      "jaccard_overlap": 0.113924,
+      "route_coverage": 0.204545,
+      "regret": 2.215379
+    },
+    {
+      "scenario_id": 14,
+      "route_found": true,
+      "scenario_optimal_cost": 94.989339,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.777507,
+      "jaccard_overlap": 0.073171,
+      "route_coverage": 0.136364,
+      "regret": 1.788168
+    },
+    {
+      "scenario_id": 15,
+      "route_found": true,
+      "scenario_optimal_cost": 95.505925,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.210903,
+      "jaccard_overlap": 0.157895,
+      "route_coverage": 0.272727,
+      "regret": 0.704977
+    },
+    {
+      "scenario_id": 16,
+      "route_found": true,
+      "scenario_optimal_cost": 94.298087,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 96.257033,
+      "jaccard_overlap": 0.113924,
+      "route_coverage": 0.204545,
+      "regret": 1.958947
+    },
+    {
+      "scenario_id": 17,
+      "route_found": true,
+      "scenario_optimal_cost": 95.544463,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 97.213705,
+      "jaccard_overlap": 0.157895,
+      "route_coverage": 0.272727,
+      "regret": 1.669242
+    },
+    {
+      "scenario_id": 18,
+      "route_found": true,
+      "scenario_optimal_cost": 95.123317,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 95.985898,
+      "jaccard_overlap": 0.419355,
+      "route_coverage": 0.590909,
+      "regret": 0.862581
+    },
+    {
+      "scenario_id": 19,
+      "route_found": true,
+      "scenario_optimal_cost": 94.532391,
+      "scenario_optimal_length": 56.669048,
+      "det_route_under_scenario_cost": 95.856259,
+      "jaccard_overlap": 0.08642,
+      "route_coverage": 0.159091,
+      "regret": 1.323867
+    }
+  ]
+}
