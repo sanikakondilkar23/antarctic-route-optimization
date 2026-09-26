@@ -1,0 +1,101 @@
+{
+  "generated_utc": "2026-09-26T12:31:01.402879+00:00",
+  "tests_passed": 113,
+  "tests_failed": 0,
+  "tests_status": "PASSED",
+  "sic_artifact_present": true,
+  "sic_shape": [
+    167,
+    173,
+    369
+  ],
+  "sic_dtype": "float32",
+  "sic_min": 0.0,
+  "sic_max": 0.9917573928833008,
+  "sic_mean": 0.04199979081749916,
+  "sic_contains_nan": true,
+  "sic_nan_fraction": 0.1687266005608033,
+  "sic_grid": {
+    "n_rows": 173,
+    "n_cols": 369,
+    "resolution_deg": 0.25,
+    "lat_range": [
+      -75.0,
+      -32.0
+    ],
+    "lon_range": [
+      -10.0,
+      82.0
+    ]
+  },
+  "sic_uncertainty_shape": [
+    167,
+    3,
+    101,
+    361
+  ],
+  "route_model_present": true,
+  "route_model_path": "outputs/ml/route_policy.pt",
+  "route_model_features": 16,
+  "route_model_actions": 8,
+  "route_validation_accuracy": 0.8413001912045889,
+  "route_validation_accuracy_is_held_out": false,
+  "route_model_trained_on_synthetic_dataset": true,
+  "cmems_integration_present": true,
+  "cmems_data_available": false,
+  "cmems_note": "no cmems_root configured (Google Drive not mounted in this environment)",
+  "cvar_computed": false,
+  "cvar_note": "ValueError: Layer 'iceberg_risk' is required for scenario generation but is not available.",
+  "dynamic_rerouting_present": true,
+  "dynamic_reroute_demo_artifact_present": true,
+  "dynamic_reroute_demo_artifact_is_synthetic": true,
+  "independent_sic_checkpoint_present": true,
+  "independent_sic_checkpoints": [
+    {
+      "path": "backend\\runs\\final_10ch_3f_seed0\\best_model.pt",
+      "is_sic_forecaster": true,
+      "n_tensors": 6,
+      "param_count": 270147
+    },
+    {
+      "path": "backend\\runs\\final_10ch_3f_seed1\\best_model.pt",
+      "is_sic_forecaster": true,
+      "n_tensors": 6,
+      "param_count": 270147
+    },
+    {
+      "path": "backend\\runs\\final_10ch_3f_seed2\\best_model.pt",
+      "is_sic_forecaster": true,
+      "n_tensors": 6,
+      "param_count": 270147
+    }
+  ],
+  "independent_sic_checkpoint_note": "backend/runs/final_10ch_3f_seed{0,1,2}/best_model.pt are the teammate's ConvLSTM SIC forecasting checkpoints (keys cells.*.conv.*, head.*). They are NOT used by this route optimizer: the route pipeline consumes the committed inference output in backend/cache. The raw 2026 inference inputs (backend/data/test_2026) are absent, so inference cannot be re-run and was not.",
+  "synthetic_route_training_dataset": {
+    "present": true,
+    "path": "outputs/ml/route_training_dataset.npz",
+    "is_real_antarctic_route_training_data": false,
+    "grid_used": "20x25 synthetic grid (src/environment/synthetic.py)",
+    "role": "pipeline smoke test only; the route policy was trained on it, so route-policy accuracy is not a real-data metric"
+  },
+  "retraining_performed": false,
+  "architecture_changed": false,
+  "existing_artifacts_modified": false,
+  "warnings": [
+    "CMEMS current data unavailable (Drive not mounted); current_cost/current_uo/current_vo absent from the grid",
+    "CVaR scenario stage unavailable: iceberg risk and iceberg uncertainty layers have no data",
+    "route policy did not reach the goal on the real 173x369 grid: trained on a 20x25 SYNTHETIC dataset, so n_rows/n_cols and distance features are out of distribution; the robust/safety layer constrained every step to the expert path",
+    "outputs/ml/dynamic_reroute_demo.json was produced on a synthetic 20x20 demo environment, not on real SIC",
+    "outputs/ml/route_training_dataset.csv/.npz is synthetic smoke-test data from src/environment/synthetic.py, not real Antarctic route-training data"
+  ],
+  "overall_status": "VERIFIED WITH LIMITATIONS - real SIC -> EnvironmentalGrid -> route ML policy -> safety/robust A* -> dynamic rerouting -> final route all executed on committed artifacts. Limitations: CMEMS data and iceberg data unavailable, CVaR stage not computable, route policy trained on synthetic smoke data and did not reach the goal on the real grid.",
+  "provenance": {
+    "sic": "REAL (teammate's committed 2026 forecast output, backend/cache)",
+    "sic_uncertainty": "REAL (raw ensemble + MC-dropout std, model band only)",
+    "cmems": "REAL if mounted, otherwise reported UNAVAILABLE (never faked)",
+    "iceberg": "NOT AVAILABLE (no data/model output in the repository)",
+    "route_ml_policy": "REAL file outputs/ml/route_policy.pt, but trained on a SYNTHETIC 20x25 smoke-test dataset",
+    "robust_expert": "REAL environmental field, deterministic A* on real SIC",
+    "cvar": "requires scenario layers (iceberg risk + uncertainty); reported UNAVAILABLE when those layers are absent"
+  }
+}
