@@ -1,0 +1,390 @@
+{
+  "generated_utc": "2026-09-27T12:58:32.094259+00:00",
+  "project": "SIH2026059",
+  "system": "IceRoute-Robust",
+  "host": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.9"
+  },
+  "target": {
+    "lat_min": -75.0,
+    "lat_max": -32.0,
+    "lon_min": -10.0,
+    "lon_max": 82.0,
+    "period_start": "2021-01-01",
+    "period_end": "2025-12-31",
+    "routing_grid_rows": 173,
+    "routing_grid_cols": 369,
+    "resolution_deg": 0.25
+  },
+  "dataset_root": {
+    "path": null,
+    "resolved_via": null,
+    "available": false
+  },
+  "datasets": [
+    {
+      "dataset": "SIC",
+      "provider": "NSIDC / OSI SAF / AMSR2",
+      "role": "sea-ice concentration",
+      "target_layer": "sic_mean",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "OSI_SAF",
+      "provider": "EUMETSAT OSI SAF",
+      "role": "sea-ice concentration / ice edge",
+      "target_layer": "sic_mean",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "AMSR2",
+      "provider": "JAXA AMSR2",
+      "role": "sea-ice concentration",
+      "target_layer": "sic_mean",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "Copernicus_Ocean",
+      "provider": "Copernicus Marine (GLORYS12V1)",
+      "role": "ocean currents uo/vo",
+      "target_layer": "current_uo/current_vo",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ],
+      "must_preserve_vectors": [
+        "uo",
+        "vo"
+      ]
+    },
+    {
+      "dataset": "CMEMS_PHY",
+      "provider": "Copernicus Marine",
+      "role": "ocean physical fields",
+      "target_layer": "current_uo/current_vo",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ],
+      "must_preserve_vectors": [
+        "uo",
+        "vo"
+      ]
+    },
+    {
+      "dataset": "CMEMS_Future_Forecast",
+      "provider": "Copernicus Marine forecasts",
+      "role": "future ocean currents for forecast routing",
+      "target_layer": "current_uo/current_vo",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ],
+      "must_preserve_vectors": [
+        "uo",
+        "vo"
+      ]
+    },
+    {
+      "dataset": "ERA5",
+      "provider": "ECMWF / Copernicus CDS",
+      "role": "atmospheric forcing u10/v10/t2m",
+      "target_layer": "wind_cost",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "ECMWF_ENS",
+      "provider": "ECMWF ensemble",
+      "role": "ensemble wind / uncertainty",
+      "target_layer": "wind_cost",
+      "kind": "gridded",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "ICEBERGS",
+      "provider": "national ice services / iceberg databases",
+      "role": "iceberg risk observations",
+      "target_layer": "iceberg_risk",
+      "kind": "point_observations",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "GEBCO",
+      "provider": "GEBCO",
+      "role": "bathymetry + land mask",
+      "target_layer": "depth",
+      "kind": "static",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "AIS",
+      "provider": "AIS vessel tracking",
+      "role": "observational vessel tracks",
+      "target_layer": "validation_only",
+      "kind": "point_observations",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    },
+    {
+      "dataset": "Vessel",
+      "provider": "project",
+      "role": "static vessel metadata (draft, ice class)",
+      "target_layer": "constraint",
+      "kind": "static_metadata",
+      "source": null,
+      "available": false,
+      "status": "NOT_AVAILABLE",
+      "files": [],
+      "total_size": 0,
+      "notes": [
+        "dataset root not resolvable in this environment; not audited"
+      ]
+    }
+  ],
+  "committed_artifacts": {
+    "note": "committed in-repository artifacts; measured directly, never assumed",
+    "artifacts": [
+      {
+        "file": "backend\\cache\\routing_sic_2026.npy",
+        "present": true,
+        "role": "REAL SIC forecast driving the verified route",
+        "protected": true,
+        "size_bytes": 42643244,
+        "shape": [
+          167,
+          173,
+          369
+        ],
+        "dtype": "float32",
+        "finite_cells": 8862022,
+        "total_cells": 10660779,
+        "nan_cells": 1798757,
+        "min": 0.0,
+        "max": 0.9917573928833008,
+        "mean": 0.04199979081749916,
+        "nan_convention": "NaN = invalid / non-navigable; never zero-filled"
+      },
+      {
+        "file": "backend\\cache\\uncertainty_2026.npy",
+        "present": true,
+        "role": "SIC forecast uncertainty (3 horizons)",
+        "protected": true,
+        "size_bytes": 73067972,
+        "shape": [
+          167,
+          3,
+          101,
+          361
+        ],
+        "dtype": "float32",
+        "finite_cells": 18266961,
+        "total_cells": 18266961,
+        "nan_cells": 0,
+        "min": 5.914459325140342e-05,
+        "max": 0.2925111651420593,
+        "mean": 0.02228230983018875,
+        "nan_convention": "no NaN present"
+      },
+      {
+        "file": "backend\\cache\\valid_mask.npy",
+        "present": true,
+        "role": "cells ever valid during training",
+        "protected": false,
+        "size_bytes": 36589,
+        "shape": [
+          101,
+          361
+        ],
+        "dtype": "bool"
+      },
+      {
+        "file": "backend\\cache\\routing_land_extension.npy",
+        "present": true,
+        "role": "GEBCO-derived land mask, extension band",
+        "protected": false,
+        "size_bytes": 26696,
+        "shape": [
+          72,
+          369
+        ],
+        "dtype": "bool"
+      },
+      {
+        "file": "backend\\cache\\routing_station_override.npy",
+        "present": true,
+        "role": "station approach override",
+        "protected": false,
+        "size_bytes": 63965,
+        "shape": [
+          173,
+          369
+        ],
+        "dtype": "bool"
+      },
+      {
+        "file": "backend\\cache\\routing_multiplier_2026.npy",
+        "present": true,
+        "role": "committed ice-cost multiplier",
+        "protected": false,
+        "size_bytes": 42643244,
+        "shape": [
+          167,
+          173,
+          369
+        ],
+        "dtype": "float32",
+        "finite_cells": 8616948,
+        "total_cells": 10660779,
+        "nan_cells": 2043831,
+        "min": 1.0,
+        "max": Infinity,
+        "mean": Infinity,
+        "nan_convention": "NaN = invalid / non-navigable; never zero-filled"
+      },
+      {
+        "file": "backend\\cache\\routing_lat.npy",
+        "present": true,
+        "role": "routing grid latitudes",
+        "protected": false,
+        "size_bytes": 820,
+        "shape": [
+          173
+        ],
+        "dtype": "float32",
+        "finite_cells": 173,
+        "total_cells": 173,
+        "nan_cells": 0,
+        "min": -75.0,
+        "max": -32.0,
+        "mean": -53.5,
+        "nan_convention": "no NaN present"
+      },
+      {
+        "file": "backend\\cache\\routing_lon.npy",
+        "present": true,
+        "role": "routing grid longitudes",
+        "protected": false,
+        "size_bytes": 1604,
+        "shape": [
+          369
+        ],
+        "dtype": "float32",
+        "finite_cells": 369,
+        "total_cells": 369,
+        "nan_cells": 0,
+        "min": -10.0,
+        "max": 82.0,
+        "mean": 36.0,
+        "nan_convention": "no NaN present"
+      },
+      {
+        "file": "frontend\\data\\coastline.json",
+        "present": true,
+        "role": "Antarctic coastline basemap",
+        "protected": false,
+        "size_bytes": 14885
+      },
+      {
+        "file": "outputs\\ml\\route_policy.pt",
+        "present": true,
+        "role": "route ML policy (synthetic training)",
+        "protected": true,
+        "size_bytes": 17745
+      }
+    ],
+    "routing_grid": {
+      "n_rows": 173,
+      "n_cols": 369,
+      "lat_min": -75.0,
+      "lat_max": -32.0,
+      "lon_min": -10.0,
+      "lon_max": 82.0,
+      "lat_spacing_deg": 0.25,
+      "lon_spacing_deg": 0.25,
+      "matches_target_region": true
+    }
+  },
+  "integrity": {
+    "synthetic_data_introduced": false,
+    "missing_data_fabricated": false,
+    "nan_zero_filled": false,
+    "unjustified_extrapolation": false,
+    "models_retrained": false,
+    "route_artifacts_modified": false
+  }
+}

@@ -1,0 +1,285 @@
+{
+  "routing_grid": {
+    "shape": [
+      173,
+      369
+    ],
+    "lat_min": -75.0,
+    "lat_max": -32.0,
+    "lon_min": -10.0,
+    "lon_max": 82.0,
+    "spacing_deg": 0.25,
+    "total_cells": 63837
+  },
+  "sic": {
+    "artifact": "backend/cache/routing_sic_2026.npy",
+    "shape": [
+      167,
+      173,
+      369
+    ],
+    "dtype": "float32",
+    "nan_convention": "NaN = invalid / non-navigable; never zero-filled",
+    "covers_full_routing_grid_spatially": true,
+    "coverage_pct_min": 83.127,
+    "coverage_pct_max": 83.127,
+    "coverage_pct_mean": 83.127,
+    "navigable_cells_min": 53066,
+    "navigable_cells_max": 53066,
+    "min_navigable_timestep": 0,
+    "max_navigable_timestep": 0,
+    "any_timestep_fully_empty": false,
+    "spatial_coverage_complete": true,
+    "note": "SIC is finite over the entire 173x369 routing domain for every one of the 167 timesteps; the NaN cells are genuine land/ice-shelf and coastal-contamination exclusions, not gaps."
+  },
+  "uncertainty": {
+    "artifact": "backend/cache/uncertainty_2026.npy",
+    "shape": [
+      167,
+      3,
+      101,
+      361
+    ],
+    "dtype": "float32",
+    "covers_routing_grid_shape": [
+      173,
+      369
+    ],
+    "covers_model_band_shape": [
+      101,
+      361
+    ],
+    "band_rows": [
+      0,
+      101
+    ],
+    "band_cols": [
+      0,
+      361
+    ],
+    "band_lat": [
+      -75.0,
+      -50.0
+    ],
+    "band_lon": [
+      -10.0,
+      80.0
+    ],
+    "coverage_pct_of_routing_grid": 57.12,
+    "uncovered_pct_of_routing_grid": 42.88,
+    "nan_cells_inside_band": 0,
+    "gapless_inside_its_own_band": true,
+    "status": "PARTIAL",
+    "reason": "the artifact is the ConvLSTM model output, which exists only on the model's own training domain (lat -75..-50, lon -10..80). The 173x369 routing grid adds a 72-row extension band (lat -49.75..-32) and 8 columns (lon 80.25..82) that the model was never trained on, so no uncertainty value exists there.",
+    "actions_not_taken": [
+      "not zero-filled",
+      "not mean-filled",
+      "not interpolated",
+      "not extrapolated",
+      "not resized",
+      "not boundary-duplicated"
+    ]
+  },
+  "probes": [
+    {
+      "region": "western Antarctic sector",
+      "requested": {
+        "lat": -74.0,
+        "lon": -30.0
+      },
+      "inside_routing_grid": false,
+      "sic_state": "OUTSIDE the routing grid (lon range is -10..82)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "eastern Antarctic sector",
+      "requested": {
+        "lat": -68.0,
+        "lon": 60.0
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        28,
+        280
+      ],
+      "cell_centre": {
+        "lat": -68.0,
+        "lon": 60.0
+      },
+      "sic_d0": null,
+      "sic_last": null,
+      "sic_finite_timesteps": 0,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": false,
+      "sic_state": "non-navigable in 167 timesteps",
+      "uncertainty": 0.018951967358589172,
+      "uncertainty_state": "REAL (finite)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "Ross Sea region",
+      "requested": {
+        "lat": -76.0,
+        "lon": 178.0
+      },
+      "inside_routing_grid": false,
+      "sic_state": "OUTSIDE the routing grid (lon range is -10..82)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "Weddell Sea region",
+      "requested": {
+        "lat": -65.0,
+        "lon": -40.0
+      },
+      "inside_routing_grid": false,
+      "sic_state": "OUTSIDE the routing grid (lon range is -10..82)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "Antarctic Peninsula",
+      "requested": {
+        "lat": -63.0,
+        "lon": -60.0
+      },
+      "inside_routing_grid": false,
+      "sic_state": "OUTSIDE the routing grid (lon range is -10..82)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "coastal (Maitri)",
+      "requested": {
+        "lat": -70.77,
+        "lon": 11.73
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        17,
+        87
+      ],
+      "cell_centre": {
+        "lat": -70.75,
+        "lon": 11.75
+      },
+      "sic_d0": null,
+      "sic_last": null,
+      "sic_finite_timesteps": 0,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": false,
+      "sic_state": "non-navigable in 167 timesteps",
+      "uncertainty": 0.026812206953763962,
+      "uncertainty_state": "REAL (finite)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "coastal (Bharati)",
+      "requested": {
+        "lat": -69.41,
+        "lon": 76.19
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        22,
+        345
+      ],
+      "cell_centre": {
+        "lat": -69.5,
+        "lon": 76.25
+      },
+      "sic_d0": 0.9165493845939636,
+      "sic_last": 0.8981084823608398,
+      "sic_finite_timesteps": 167,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": true,
+      "sic_state": "navigable over all 167 timesteps",
+      "uncertainty": 0.02924080565571785,
+      "uncertainty_state": "REAL (finite)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "offshore (Cape Town)",
+      "requested": {
+        "lat": -34.0,
+        "lon": 18.5
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        164,
+        114
+      ],
+      "cell_centre": {
+        "lat": -34.0,
+        "lon": 18.5
+      },
+      "sic_d0": 0.0,
+      "sic_last": 0.0,
+      "sic_finite_timesteps": 167,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": true,
+      "sic_state": "navigable over all 167 timesteps",
+      "uncertainty": "NOT_AVAILABLE (outside model domain)",
+      "land_extension_mask": true,
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "northern boundary",
+      "requested": {
+        "lat": -32.25,
+        "lon": 40.0
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        171,
+        200
+      ],
+      "cell_centre": {
+        "lat": -32.25,
+        "lon": 40.0
+      },
+      "sic_d0": 0.0,
+      "sic_last": 0.0,
+      "sic_finite_timesteps": 167,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": true,
+      "sic_state": "navigable over all 167 timesteps",
+      "uncertainty": "NOT_AVAILABLE (outside model domain)",
+      "land_extension_mask": false,
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    },
+    {
+      "region": "southern boundary",
+      "requested": {
+        "lat": -74.75,
+        "lon": 20.0
+      },
+      "inside_routing_grid": true,
+      "cell": [
+        1,
+        120
+      ],
+      "cell_centre": {
+        "lat": -74.75,
+        "lon": 20.0
+      },
+      "sic_d0": null,
+      "sic_last": null,
+      "sic_finite_timesteps": 0,
+      "sic_n_timesteps": 167,
+      "sic_covers_full_period": false,
+      "sic_state": "non-navigable in 167 timesteps",
+      "uncertainty": 0.04971051961183548,
+      "uncertainty_state": "REAL (finite)",
+      "routing_executed_here": false,
+      "routing_note": "data coverage only; the route algorithm was not executed at this probe in this task"
+    }
+  ]
+}
