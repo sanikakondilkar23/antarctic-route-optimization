@@ -44,6 +44,15 @@ base_cost = None
 dx_km_per_lat = None
 
 
+def goal_cell(entry):
+    """Accepts both goals-JSON shapes: {name: [row, col]} (written by
+    build_station_override.py) and {name: {"cell": [row, col], ...}}
+    (the committed file, written with the offshore-goal metadata)."""
+    if isinstance(entry, dict):
+        return tuple(entry["cell"])
+    return tuple(entry)
+
+
 # ---------------------------------------------------------------- STEP 1
 def load_combine():
     global routing_lat, routing_lon, base_cost, dx_km_per_lat
@@ -74,7 +83,8 @@ def load_combine():
 
     with open(CACHE / "routing_station_goals.json") as f:
         goals = json.load(f)
-    for name, (i, j) in goals.items():
+    for name, entry in goals.items():
+        i, j = goal_cell(entry)
         if np.isinf(base[i, j]):
             base[i, j] = 100.0
             print(f"{name} goal cell forced finite at ({i}, {j})")
@@ -236,8 +246,8 @@ def main():
     H_ROUTE, H_LON = base_cost.shape
 
     start = find_start()
-    goal = tuple(json.load(open(CACHE / "routing_station_goals.json"))
-                 ["Maitri"])
+    goal = goal_cell(json.load(open(CACHE / "routing_station_goals.json"))
+                     ["Maitri"])
 
     print(f"Start cell: ({start[0]}, {start[1]}) = "
           f"({routing_lat[start[0]]:.2f}, {routing_lon[start[1]]:.2f})")

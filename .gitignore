@@ -6,6 +6,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Frontend (React demo) dependencies and build output
+node_modules/
+frontend/route_demo/dist/
+
 # Raw / downloaded / huge data (kept offline: multi-GB, per-file above the
 # 100 MB GitHub limit -> do not upload)
 /data/
