@@ -80,6 +80,7 @@
 .pl-step.bad { background: rgba(248, 113, 113, 0.14); }
 .pl-k { font-size: 8.5px; letter-spacing: 0.09em; color: #7f9dc0; }
 .pl-v { font-size: 11px; font-weight: 600; color: #e8f4ff; }
+.pl-v.short { display: none; }
 .pl-arrow { color: #46688f; font-size: 11px; }
 
 /* control card */
@@ -352,10 +353,73 @@
 .btn-warn { background: linear-gradient(180deg, #b45309, #78350f); border-color: #f59e0b; color: #fff7ed; }
 .btn-warn:hover:not(:disabled) { border-color: #fbbf24; }
 
+/* map controls: zoom / reset / fit-route, deliberately small and quiet */
+.map-ctrls {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  bottom: 118px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+.map-ctrls button {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(120, 165, 215, 0.26);
+  background: rgba(6, 12, 21, 0.88);
+  color: #cfe4f7;
+  font: 600 13px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.map-ctrls button:hover:not(:disabled) { border-color: #7dd3fc; color: #fff; background: rgba(14, 34, 54, 0.95); }
+.map-ctrls button:disabled { opacity: 0.35; cursor: not-allowed; }
+.map-zoom {
+  font: 600 9px ui-monospace, monospace;
+  color: #8fb0d0;
+  background: rgba(6, 12, 21, 0.85);
+  border: 1px solid rgba(120, 165, 215, 0.22);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
 /* --------------------------------------------------------------- responsive */
 /* The reused Timeline needs a wider readout column than the old dashboard
    layout allowed, otherwise "D100  2026-04-16" collides with the tick row. */
 .timeline { grid-template-columns: 214px minmax(0, 1fr) 196px; }
+
+/* legend lives inside the map component (bottom-left) — one compact key only */
+.ovb-legend-stats {
+  margin-top: 4px;
+  font-size: 9.5px;
+  color: #8fb0d0;
+  white-space: nowrap;
+}
+
+/* Narrower rails on smaller screens so the map keeps ~65-70% of the area
+   instead of being squeezed by the information column. */
+@media (max-width: 1560px) {
+  .plan-main { grid-template-columns: minmax(0, 1fr) 340px; }
+  /* Keep the pipeline clear of the control card and the top-right route HUD. */
+  .pipeline {
+    left: 290px;
+    right: 268px;
+    transform: none;
+    max-width: none;
+    justify-content: center;
+    padding: 4px 6px;
+    gap: 2px;
+  }
+  .pl-step { padding: 1px 4px; }
+  .pl-k { font-size: 8px; }
+  .pl-v { font-size: 10px; }
+  .pl-v.long { display: none; }
+  .pl-v.short { display: inline; }
+  .pl-arrow { font-size: 9px; }
+}
 
 @media (max-width: 1180px) {
   .plan-main { grid-template-columns: minmax(0, 1fr) 320px; }

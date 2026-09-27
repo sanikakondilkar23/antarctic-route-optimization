@@ -26,6 +26,7 @@ Endpoints
     GET /api/uncertainty/<timestep>[?horizon=0..2]
     GET /api/uncertainty/summary
     GET /api/models/ensemble
+    GET /api/map/coastline
     GET /api/reroute/<timestep>[?origin_timestep=0]
     GET /api/limitations
     GET /                         built React app (frontend/route_demo/dist)
@@ -779,6 +780,28 @@ def reroute_route(original: Any, new_timestep: Any,
     }
 
 
+COASTLINE_JSON = ROOT / "frontend" / "data" / "coastline.json"
+
+
+@lru_cache(maxsize=1)
+def coastline() -> Dict[str, Any]:
+    """
+    Antarctic coastline context for the chart (read-only GeoJSON).
+
+    Served from the repository's own Natural Earth coastline file so the map
+    has real geographic context — the continent and its islands — instead of
+    an empty black plate. It is pure cartography: no SIC, no routing, and it
+    is never used by the optimizer.
+    """
+    if not COASTLINE_JSON.is_file():
+        raise FileNotFoundError("coastline.json is not available")
+    payload = json.loads(COASTLINE_JSON.read_text(encoding="utf-8"))
+    payload["source"] = "frontend/data/coastline.json (Natural Earth coastline)"
+    payload["role"] = ("map context only — not an input to the cost map or "
+                       "the route")
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Availability discovery (never optimistic, never fabricated)
 # ---------------------------------------------------------------------------
@@ -1372,6 +1395,11 @@ def create_app() -> Flask:
             },
             "limitations": LIMITATIONS,
         })
+
+    @app.get("/api/map/coastline")
+    def map_coastline():
+        """Real Antarctic coastline geometry for the basemap layer."""
+        return jsonify(coastline())
 
     @app.get("/api/limitations")
     def limitations():

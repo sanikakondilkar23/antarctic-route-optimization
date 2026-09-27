@@ -47,7 +47,7 @@ console.log('canvas   ', await box('.map-shell canvas'))
 console.log('\n=== PRE-OPTIMIZE STATE ===')
 console.log('metrics card:', (await p.textContent('.card .empty').catch(() => 'MISSING')).slice(0, 70))
 console.log('pipeline   :', (await p.textContent('.pipeline')).replace(/\s+/g, ' ').trim())
-console.log('legend     :', (await p.textContent('.lg-stats').catch(() => 'MISSING')).replace(/\s+/g, ' ').trim())
+console.log('legend     :', (await p.textContent('.ovb-legend-stats').catch(() => 'MISSING')).replace(/\s+/g, ' ').trim())
 
 console.log('\n=== ACTION 1: OPTIMIZE ROUTE (baseline leg) ===')
 await p.click('.btn-primary.wide')
@@ -102,7 +102,7 @@ await p.evaluate(() => {
 })
 await p.waitForTimeout(4000)
 console.log('top-left HUD:', (await p.textContent('.hud-tl')).replace(/\s+/g, ' ').trim())
-console.log('legend      :', (await p.textContent('.lg-stats')).replace(/\s+/g, ' ').trim())
+console.log('legend      :', (await p.textContent('.ovb-legend-stats')).replace(/\s+/g, ' ').trim())
 
 console.log('\n=== PROVENANCE (must not be fabricated) ===')
 const prov = (await p.textContent('.prov')).replace(/\s+/g, ' ').trim()

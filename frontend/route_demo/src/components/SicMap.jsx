@@ -1,27 +1,30 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { sicColor, uncColor, diffColor } from '../api.js'
+import { sicColor, sicAlpha, uncColor, diffColor } from '../api.js'
 
-const NONNAV_RGB = [40, 47, 56]
-const NONNAV_OUTSIDE_RGB = [26, 31, 39] // outside the model domain (no value at all)
-const ROUTE_RGB = [232, 247, 255]
+const NONNAV_RGB = [46, 55, 68]
+const ROUTE_RGB = [240, 250, 255]
 const ORIGIN_RGB = [251, 191, 36]
+const LAND_FILL = [27, 37, 49]
+const COAST_STROKE = 'rgba(133,170,206,0.62)'
+const MIN_ZOOM = 1
+const MAX_ZOOM = 9
 
 /**
  * Central Antarctic digital-navigation chart.
  *
- * Renders the REAL raster returned by the backend for the selected timestep
- * and overlays only API-returned geometry:
+ * Layers, bottom to top — geography first, decision last:
  *
- *   primaryRoute  – the plan on screen (white-cyan, glowing, dominant)
- *   originRoute   – the pre-reroute path (amber, dashed, secondary)
- *   changedCells  – cells that differ between the two plans
- *   pulseT        – 0..1 sweep used to make an action unmistakable
- *   vesselT       – 0..1 vessel position along the primary route
+ *   1. basemap plate      ocean tint + graticule
+ *   2. coastline          real Antarctic land polygons (map context)
+ *   3. SIC raster         real /api/sic/<t> payload, alpha-weighted so the
+ *                         geography reads through the open water
+ *   4. non-navigable      hatched NaN cells (never zero-filled)
+ *   5. uncertainty        optional artifact overlay
+ *   6. route              original dashed -> updated primary -> changed cells
+ *   7. endpoints          start ring, destination star, direction arrows
  *
- * Three rasters are possible, all real:
- *   'sic'         – routing_sic_2026.npy           (default)
- *   'uncertainty' – uncertainty_2026.npy, 1 horizon
- *   'diff'        – arithmetic difference of two real SIC frames
+ * Every raster is real: routing_sic_2026.npy and uncertainty_2026.npy via the
+ * API. No image frames, no static basemap tiles, nothing synthesised.
  */
 export default function SicMap({
   slice, lat, lon,
@@ -42,6 +45,7 @@ export default function SicMap({
   onPickCell,
   pickMode = null,
   selection = null,
+  coastline = null,
   hud,
 }) {
   const canvasRef = useRef(null)
@@ -65,6 +69,14 @@ export default function SicMap({
     window.addEventListener('resize', measure)
     return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
+
+  /* ------------------------------------------------------------------ */
+  /* View state: zoom + pan over the fitted plate                        */
+  /* ------------------------------------------------------------------ */
+  const [view, setView] = useState({ zoom: 1, px: 0, py: 0 })
+  const viewRef = useRef(view)
+  viewRef.current = view
+  const dragRef = useRef(null)
 
   const geo = useMemo(() => {
     const latMin = lat[0]
@@ -94,13 +106,136 @@ export default function SicMap({
     const h = dataH * scale
     const x0 = padX + (availW - w) / 2
     const y0 = padTop + (availH - h) / 2
+
+    const z = view.zoom
+    const s = scale * z
+    // Latitude is stretched by the aspect factor, longitude is not: that is
+    // what makes a 0.25 deg cell square-ish on the plate at this latitude.
+    // Every vertical measure below uses `sy`, never `s`, or the raster and the
+    // route drawn on top of it drift apart.
+    const sy = s * aspect
+    const vw = dataW * s
+    const vh = (latMax - latMin) * sy
+    const px = view.px
+    const py = view.py
     return {
-      latMin, latMax, lonMin, lonMax, scale, x0, y0, w, h,
-      x: (lo) => x0 + (lo - lonMin) * scale,
-      y: (la) => y0 + (latMax - la) * scale,
-      cellW: scale * 0.25,
+      latMin, latMax, lonMin, lonMax, aspect, scale, x0, y0, w, h,
+      zoom: z, vw, vh, px, py,
+      x: (lo) => x0 + px + (lo - lonMin) * s,
+      y: (la) => y0 + py + (latMax - la) * sy,
+      cellW: s * 0.25,
+      cellH: sy * 0.25,
+    }
+  }, [lat, lon, size, view])
+
+  const clampPan = useCallback((px, py, z) => {
+    if (!lat.length || !lon.length) return { px, py }
+    const latMin = lat[0]
+    const latMax = lat[lat.length - 1]
+    const lonMin = lon[0]
+    const lonMax = lon[lon.length - 1]
+    const midLat = (latMin + latMax) / 2
+    const aspect = 1 / Math.cos((Math.abs(midLat) * Math.PI) / 180)
+    const padX = 26
+    const padTop = 68
+    const padBottom = 74
+    const availW = Math.max(40, size.w - padX * 2)
+    const availH = Math.max(40, size.h - padTop - padBottom)
+    const dataW = lonMax - lonMin
+    const dataH = (latMax - latMin) * aspect
+    const scale = Math.min(availW / dataW, availH / dataH)
+    const s = scale * z
+    const vw = dataW * s
+    const vh = dataH * s
+    const x0 = padX + (availW - dataW * scale) / 2
+    const y0 = padTop + (availH - dataH * scale) / 2
+    // Keep at least 110px of the plate on screen, and never let more than
+    // ~120px of empty margin accumulate on the far side.
+    const limX = Math.max(0, (vw - 110) / 2) + Math.max(0, (size.w - vw) / 2)
+    const limY = Math.max(0, (vh - 110) / 2) + Math.max(0, (size.h - vh) / 2)
+    return {
+      px: Math.max(-x0 - limX, Math.min(size.w - x0 - vw + limX, px)),
+      py: Math.max(-y0 - limY, Math.min(size.h - y0 - vh + limY, py)),
     }
   }, [lat, lon, size])
+
+  const zoomBy = useCallback((factor, cx, cy) => {
+    setView((v) => {
+      const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, v.zoom * factor))
+      if (z === v.zoom) return v
+      // keep the point under the cursor fixed
+      const k = z / v.zoom
+      const px = cx - (cx - v.px) * k
+      const py = cy - (cy - v.py) * k
+      const c = clampPan(px, py, z)
+      return { zoom: z, px: c.px, py: c.py }
+    })
+  }, [clampPan])
+
+  const resetView = useCallback(() => setView({ zoom: 1, px: 0, py: 0 }), [])
+
+  /** Fit the view to a route's bounding box, keeping the aspect correction. */
+  const fitToRoute = useCallback((path) => {
+    if (!path || path.length < 2 || !lat.length) return
+    let r0 = Infinity; let r1 = -Infinity; let c0 = Infinity; let c1 = -Infinity
+    for (const [r, c] of path) {
+      if (r < r0) r0 = r; if (r > r1) r1 = r
+      if (c < c0) c0 = c; if (c > c1) c1 = c
+    }
+    // Margin in degrees, so short legs still get breathing room.
+    const padLon = 3
+    const padLat = 2
+    const latMin0 = lat[0]
+    const latMax0 = lat[lat.length - 1]
+    const lonMin0 = lon[0]
+    const lonMax0 = lon[lon.length - 1]
+    const boxLonMin = Math.max(lonMin0, lon[c0] - padLon)
+    const boxLonMax = Math.min(lonMax0, lon[c1] + padLon)
+    const boxLatMax = Math.min(latMax0, lat[r1] + padLat)
+    const boxLatMin = Math.max(latMin0, lat[r0] - padLat)
+    if (!(boxLonMax > boxLonMin) || !(boxLatMax > boxLatMin)) return
+
+    const midLat = (latMin0 + latMax0) / 2
+    const aspect = 1 / Math.cos((Math.abs(midLat) * Math.PI) / 180)
+    const spanLon = boxLonMax - boxLonMin
+    const spanLat = (boxLatMax - boxLatMin) * aspect
+    const padX = 26; const padTop = 68; const padBottom = 74
+    const availW = Math.max(40, size.w - padX * 2)
+    const availH = Math.max(40, size.h - padTop - padBottom)
+    const dataW = lonMax0 - lonMin0
+    const dataH = (latMax0 - latMin0) * aspect
+    const base = Math.min(availW / dataW, availH / dataH)
+    const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+      Math.min(availW / (spanLon * base), availH / (spanLat * base))))
+    const s = base * z
+    const sy = s * aspect
+    const w = dataW * s
+    const h = dataH * s
+    const x0 = padX + (availW - dataW * base) / 2
+    const y0 = padTop + (availH - dataH * base) / 2
+    // centre the route's box on the plate. boxH is measured in RAW latitude
+    // degrees because `sy` is px per raw degree; spanLat (projected degrees)
+    // is only used above to solve for the zoom.
+    const boxX = x0 + (boxLonMin - lonMin0) * s
+    const boxY = y0 + (latMax0 - boxLatMax) * sy
+    const boxW = spanLon * s
+    const boxH = (boxLatMax - boxLatMin) * sy
+    const c = clampPan(size.w / 2 - boxX - boxW / 2,
+      size.h / 2 - boxY - boxH / 2, z)
+    setView({ zoom: z, px: c.px, py: c.py })
+  }, [lat, lon, size, clampPan])
+
+  // Re-fit only when a genuinely different route arrives, so the operator's
+  // own zoom/pan is not thrown away by unrelated re-renders.
+  const fitKey = primaryRoute ? `${primaryRoute.length}:${primaryRoute[0]}:${primaryRoute[primaryRoute.length - 1]}` : ''
+  const lastFit = useRef('')
+  useEffect(() => {
+    if (fitKey && fitKey !== lastFit.current) {
+      lastFit.current = fitKey
+      fitToRoute(primaryRoute)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitKey])
 
   /* ---------------------------------------------------------------- */
   /* Base raster — one canvas, rebuilt only when the frame changes.     */
@@ -124,6 +259,7 @@ export default function SicMap({
         const i = srcRow * nC + cIdx
         const p = (r * nC + cIdx) * 4
         let rgb
+        let alpha = 255
         if (renderMode === 'diff') {
           if (!diff) rgb = [10, 16, 26]
           else if (diff.navChange[i] === -1) rgb = [250, 205, 21]        // became non-navigable
@@ -131,15 +267,25 @@ export default function SicMap({
           else if (!Number.isFinite(diff.delta[i])) rgb = NONNAV_RGB
           else rgb = diffColor(diff.delta[i], dmax)
         } else if (renderMode === 'uncertainty') {
-          if (!src.valid[i]) rgb = layers.nonNav ? NONNAV_OUTSIDE_RGB : [6, 12, 22]
+          if (!src.valid[i]) { rgb = [26, 31, 39]; alpha = 190 }
           else rgb = uncColor(src.values[i] / 255, umax)
         } else {
+          // Real SIC. Open water is nearly transparent so the coastline and
+          // graticule underneath stay readable; the ice edge and the pack
+          // build up to full opacity. The values themselves are untouched.
           if (!src.valid[i]) {
-            rgb = layers.nonNav ? NONNAV_RGB : [8, 16, 28]
-          } else if (!layers.sic) rgb = [10, 20, 34]
-          else rgb = sicColor(src.values[i] / 255)
+            rgb = NONNAV_RGB
+            alpha = 0 // non-navigable is drawn by the hatch layer, not here
+          } else if (!layers.sic) {
+            rgb = [10, 20, 34]
+            alpha = 90
+          } else {
+            const v = src.values[i] / 255
+            rgb = sicColor(v)
+            alpha = sicAlpha(v)
+          }
         }
-        d[p] = rgb[0]; d[p + 1] = rgb[1]; d[p + 2] = rgb[2]; d[p + 3] = 255
+        d[p] = rgb[0]; d[p + 1] = rgb[1]; d[p + 2] = rgb[2]; d[p + 3] = alpha
       }
     }
     ctx.putImageData(img, 0, 0)
@@ -212,23 +358,44 @@ export default function SicMap({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, size.w, size.h)
 
-    ctx.fillStyle = '#040910'
+    ctx.fillStyle = '#04070d'
     ctx.fillRect(0, 0, size.w, size.h)
 
-    const { x0, y0, w, h, x, y } = geo
+    // The grid arrives asynchronously; there is nothing to project until it
+    // does, and a non-finite projection would throw inside the gradient.
+    if (!lat.length || !lon.length || !Number.isFinite(geo.vw) || geo.vw <= 0) return
 
-    // ocean plate + real raster
-    ctx.fillStyle = '#060e18'
-    ctx.fillRect(x0, y0, w, h)
+    const { x0, y0, w, h, x, y } = geo
+    // Zoom/pan-aware destination rect for the raster layers.
+    const rx = x(geo.lonMin)
+    const ry = y(geo.latMax)
+    const rw = geo.vw
+    const rh = geo.vh
+
+    /* ------------------------------------------------ 1. basemap plate */
+    const g = ctx.createLinearGradient(rx, ry, rx, ry + rh)
+    g.addColorStop(0, '#071320')
+    g.addColorStop(0.55, '#06101c')
+    g.addColorStop(1, '#050d17')
+    ctx.fillStyle = g
+    ctx.fillRect(rx, ry, rw, rh)
+
+    /* --------------------------------- 2. real Antarctic coastline  */
+    if (coastline) drawCoastline(ctx, coastline, x, y, ry + rh)
+
+    /* --------------------------------------------- 3. real SIC raster  */
     if (fieldCanvas) {
+      ctx.save()
       ctx.imageSmoothingEnabled = true
-      ctx.drawImage(fieldCanvas, x0, y0, w, h)
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(fieldCanvas, rx, ry, rw, rh)
+      ctx.restore()
     }
 
     if (hatchCanvas) {
       ctx.save()
       ctx.imageSmoothingEnabled = false
-      ctx.drawImage(hatchCanvas, x0, y0, w, h)
+      ctx.drawImage(hatchCanvas, rx, ry, rw, rh)
       ctx.restore()
     }
 
@@ -254,38 +421,48 @@ export default function SicMap({
       }
       vctx.putImageData(vimg, 0, 0)
       ctx.imageSmoothingEnabled = true
-      ctx.drawImage(ve, x0, y0, w, h)
+      // The uncertainty artifact only covers the model band (top-left of the
+      // plate), so it is clipped to that band rather than smeared across the
+      // extension rows, which have no uncertainty value at all.
+      ctx.beginPath()
+      ctx.rect(rx, ry, Math.min(rw, (uncertainty.nCols / slice.nCols) * rw),
+        Math.min(rh, (uncertainty.nRows / slice.nRows) * rh))
+      ctx.clip()
+      ctx.drawImage(ve, rx, ry, rw, rh)
       ctx.restore()
     }
 
-    // frame + graticule
-    ctx.strokeStyle = 'rgba(130,175,215,0.45)'
+    /* ------------------------------------ 4. frame + graticule (subtle) */
+    ctx.strokeStyle = 'rgba(120,160,200,0.30)'
     ctx.lineWidth = 1
-    ctx.strokeRect(x0, y0, w, h)
-    ctx.fillStyle = 'rgba(200,220,245,0.7)'
+    ctx.strokeRect(rx, ry, rw, rh)
+    ctx.fillStyle = 'rgba(190,214,240,0.62)'
     ctx.font = '10px ui-sans-serif, system-ui, sans-serif'
     for (let la = -75; la <= -30; la += 5) {
       const yy = y(la)
-      if (yy < y0 || yy > y0 + h) continue
-      ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + w, yy); ctx.stroke()
+      if (yy < ry || yy > ry + rh) continue
+      ctx.strokeStyle = 'rgba(120,160,200,0.13)'
+      ctx.beginPath(); ctx.moveTo(rx, yy); ctx.lineTo(rx + rw, yy); ctx.stroke()
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle'
-      ctx.fillText(`${la}\u00b0`, x0 - 6, yy)
+      ctx.fillText(`${la}\u00b0`, rx - 6, yy)
     }
     // Guard bands, proportional to the plate: wide enough to clear the
     // bottom-corner HUD overlays, never so wide that the graticule loses its
     // labels on a short screen.
-    const guardL = Math.min(210, w * 0.17)
-    const guardR = Math.min(220, w * 0.18)
+    const guardL = Math.min(210, rw * 0.17)
+    const guardR = Math.min(220, rw * 0.18)
     for (let lo = -10; lo <= 80; lo += 10) {
       const xx = x(lo)
-      if (xx < x0 || xx > x0 + w) continue
+      if (xx < rx || xx > rx + rw) continue
       // The two bottom HUD overlays occupy the plate's lower corners; drop any
       // longitude label that would render underneath one of them rather than
       // let the text collide with the SIC legend / leg readout.
-      if (xx < x0 + guardL || xx > x0 + w - guardR) continue
-      ctx.beginPath(); ctx.moveTo(xx, y0); ctx.lineTo(xx, y0 + h); ctx.stroke()
+      if (xx < rx + guardL || xx > rx + rw - guardR) continue
+      ctx.strokeStyle = 'rgba(120,160,200,0.13)'
+      ctx.beginPath(); ctx.moveTo(xx, ry); ctx.lineTo(xx, ry + rh); ctx.stroke()
+      ctx.fillStyle = 'rgba(190,214,240,0.62)'
       ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-      ctx.fillText(`${lo}\u00b0`, xx, y0 + h + 5)
+      ctx.fillText(`${lo}°`, xx, ry + rh + 5)
     }
 
     // ---- scale bar: real 0.25 deg grid, labelled in km at the mid latitude
@@ -294,10 +471,13 @@ export default function SicMap({
     {
       const midLat = (geo.latMin + geo.latMax) / 2
       const kmPerDeg = 111.32 * Math.cos((Math.abs(midLat) * Math.PI) / 180)
-      const targetKm = 500
-      const px = (targetKm / kmPerDeg) * geo.scale
-      const bx = x0 + w / 2 - px / 2
-      const by = y0 + h - 15
+      // pick a round distance that lands near 130px at the current zoom
+      const targetKm = [50, 100, 200, 500, 1000, 2000]
+        .reduce((a, b) => (Math.abs((b / kmPerDeg) * geo.scale * geo.zoom - 130)
+          < Math.abs((a / kmPerDeg) * geo.scale * geo.zoom - 130) ? b : a))
+      const px = (targetKm / kmPerDeg) * geo.scale * geo.zoom
+      const bx = rx + rw / 2 - px / 2
+      const by = ry + rh - 15
       ctx.save()
       ctx.fillStyle = 'rgba(4,9,16,0.72)'
       ctx.strokeStyle = 'rgba(120,160,210,0.28)'
@@ -316,7 +496,7 @@ export default function SicMap({
       ctx.fillStyle = 'rgba(232,244,255,0.95)'
       ctx.font = 'bold 9px ui-monospace, monospace'
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'
-      ctx.fillText('500 km', bx + px / 2, by - 6)
+      ctx.fillText(`${targetKm.toLocaleString()} km`, bx + px / 2, by - 6)
       ctx.restore()
     }
 
@@ -325,14 +505,14 @@ export default function SicMap({
     if (mb > geo.latMin && mb < geo.latMax) {
       ctx.save()
       ctx.setLineDash([7, 5])
-      ctx.strokeStyle = 'rgba(251,191,36,0.7)'
+      ctx.strokeStyle = 'rgba(251,191,36,0.55)'
       ctx.lineWidth = 1.1
-      ctx.beginPath(); ctx.moveTo(x0, y(mb)); ctx.lineTo(x0 + w, y(mb)); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(rx, y(mb)); ctx.lineTo(rx + rw, y(mb)); ctx.stroke()
       ctx.restore()
-      ctx.fillStyle = 'rgba(251,191,36,0.75)'
+      ctx.fillStyle = 'rgba(251,191,36,0.7)'
       ctx.font = '9px ui-sans-serif, system-ui, sans-serif'
       ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'
-      ctx.fillText('model domain limit  -49.75\u00b0', x0 + 5, y(mb) - 3)
+      ctx.fillText('SIC model domain limit  -49.75' + String.fromCharCode(176), rx + 5, y(mb) - 3)
     }
 
     if (!routeVisible || !layers.route) {
@@ -366,7 +546,9 @@ export default function SicMap({
     }
 
     const primary = primaryRoute && primaryRoute.length > 1 ? toXY(primaryRoute) : null
-    const scale = Math.max(1, Math.min(1.6, size.w / 1100))
+    // Stroke weight grows a little with zoom so the corridor keeps its
+    // presence when the operator dives into the ice edge.
+    const scale = Math.max(1, Math.min(2.1, size.w / 1100 + (geo.zoom - 1) * 0.16))
 
     // ---- secondary: pre-reroute original path (dashed, amber) ----
     // When the re-optimised corridor is identical to the original (verified
@@ -443,15 +625,20 @@ export default function SicMap({
       ctx.fill()
     }
 
-    // start / goal
+    // start / goal — the decision points, drawn last and largest
     const [sx, sy] = primary[0]
     const [gx, gy] = primary[primary.length - 1]
-    ctx.beginPath(); ctx.arc(sx, sy, 11, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(52,211,153,0.22)'; ctx.fill()
-    ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2)
+
+    ctx.save()
+    ctx.shadowColor = 'rgba(0,0,0,0.85)'
+    ctx.shadowBlur = 10
+    ctx.beginPath(); ctx.arc(sx, sy, 13, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(52,211,153,0.20)'; ctx.fill()
+    ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI * 2)
     ctx.fillStyle = '#34d399'; ctx.fill()
-    ctx.lineWidth = 2.4; ctx.strokeStyle = '#ffffff'; ctx.stroke()
-    drawStar(ctx, gx, gy, 13, '#f87171')
+    ctx.lineWidth = 2.6; ctx.strokeStyle = '#ffffff'; ctx.stroke()
+    ctx.restore()
+    drawStar(ctx, gx, gy, 15, '#f87171')
 
     // Marker labels are always placed INSIDE the plate. Both endpoints of the
     // real leg sit on the domain boundary (START is the top-right grid
@@ -461,8 +648,8 @@ export default function SicMap({
     const label = (text, px, py, preferLeft) => {
       const tw = ctx.measureText(text).width
       let left = preferLeft
-      if (preferLeft && px - 14 - tw < geo.x0 + 2) left = false
-      if (!preferLeft && px + 14 + tw > geo.x0 + geo.w - 2) left = true
+    if (preferLeft && px - 14 - tw < geo.x(geo.lonMin) + 2) left = false
+    if (!preferLeft && px + 14 + tw > geo.x(geo.lonMin) + geo.vw - 2) left = true
       let ty = py
       if (py + 15 > geo.y0 + geo.h - 2) ty = py - 16
       if (ty - 6 < geo.y0 + 2) ty = py + 16
@@ -498,7 +685,7 @@ export default function SicMap({
       ctx.font = `bold ${fs}px ui-sans-serif, system-ui, sans-serif`
       const wBox = Math.max(...lines.map((l) => ctx.measureText(l).width)) + padX * 2
       const hBox = lines.length * lh + padY * 2 - 4
-      const bx = geo.x0 + 12
+      const bx = rx + 12
       const by = geo.y0 + 12
       ctx.save()
       ctx.beginPath()
@@ -529,7 +716,7 @@ export default function SicMap({
     }
   }, [fieldCanvas, hatchCanvas, geo, lon, lat, primaryRoute, originRoute, changedCells,
       routeVisible, pulseT, vesselT, size, corridorUnchanged, statusChip,
-      renderMode, uncertainty, uncMax, diff, layers, selection])
+      renderMode, uncertainty, uncMax, diff, layers, selection, coastline])
 
   useEffect(() => { draw() }, [draw])
 
@@ -540,11 +727,21 @@ export default function SicMap({
     const r = canvas.getBoundingClientRect()
     const px = ev.clientX - r.left
     const py = ev.clientY - r.top
-    const { x0, y0, w, h } = geo
-    if (px < x0 || px > x0 + w || py < y0 || py > y0 + h) return null
-    const c = Math.min(slice.nCols - 1, Math.max(0, Math.floor(((px - x0) / w) * slice.nCols)))
-    const rIdx = Math.min(slice.nRows - 1, Math.max(0, Math.floor((1 - (py - y0) / h) * slice.nRows)))
+    const rx = geo.x(geo.lonMin)
+    const ry = geo.y(geo.latMax)
+    if (px < rx || px > rx + geo.vw || py < ry || py > ry + geo.vh) return null
+    const c = Math.min(slice.nCols - 1, Math.max(0,
+      Math.floor(((px - rx) / geo.vw) * slice.nCols)))
+    const rIdx = Math.min(slice.nRows - 1, Math.max(0,
+      Math.floor((1 - (py - ry) / geo.vh) * slice.nRows)))
     return { row: rIdx, col: c }
+  }
+
+  const localPos = (ev) => {
+    const canvas = canvasRef.current
+    if (!canvas) return { px: 0, py: 0 }
+    const r = canvas.getBoundingClientRect()
+    return { px: ev.clientX - r.left, py: ev.clientY - r.top }
   }
 
   const handleMove = (ev) => {
@@ -553,8 +750,7 @@ export default function SicMap({
     const { row: rIdx, col: c } = cell
     const i = rIdx * slice.nCols + c
     const isValid = !!slice.valid[i]
-    const canvas = canvasRef.current
-    const rect = canvas.getBoundingClientRect()
+    const { px, py } = localPos(ev)
     const info = {
       lat: lat[rIdx], lon: lon[c], row: rIdx, col: c,
       valid: isValid,
@@ -562,8 +758,52 @@ export default function SicMap({
       unc: uncertainty && uncertainty.valid[i] ? uncertainty.values[i] / 255 : null,
       inModelBand: rIdx < 101 && c < 361,
     }
-    setHover({ ...info, tx: ev.clientX - rect.left, ty: ev.clientY - rect.top })
+    setHover({ ...info, tx: px, ty: py })
     if (onHoverCell) onHoverCell(info)
+  }
+
+  /* --------------------------------------------------- pan and zoom */
+  // React attaches wheel as a PASSIVE listener, so preventDefault() inside the
+  // synthetic handler is rejected by the browser and the page scrolls/zooms
+  // underneath the chart. A native non-passive listener is the only way to
+  // own the wheel on the plate.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return undefined
+    const onWheelNative = (ev) => {
+      ev.preventDefault()
+      const r = canvas.getBoundingClientRect()
+      zoomBy(ev.deltaY < 0 ? 1.22 : 1 / 1.22, ev.clientX - r.left, ev.clientY - r.top)
+    }
+    canvas.addEventListener('wheel', onWheelNative, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheelNative)
+  }, [zoomBy])
+
+  const onPointerDown = (ev) => {
+    if (ev.button !== 0) return
+    // While placing an endpoint a click means "put it here", not "drag".
+    if (pickMode) return
+    const { px, py } = localPos(ev)
+    dragRef.current = { px, py, vx: viewRef.current.px, vy: viewRef.current.py }
+    ev.currentTarget.setPointerCapture?.(ev.pointerId)
+  }
+
+  const onPointerMove = (ev) => {
+    if (!dragRef.current) { handleMove(ev); return }
+    const { px, py } = localPos(ev)
+    const d = dragRef.current
+    const nx = d.vx + (px - d.px)
+    const ny = d.vy + (py - d.py)
+    setView((v) => {
+      const c = clampPan(nx, ny, v.zoom)
+      return { zoom: v.zoom, px: c.px, py: c.py }
+    })
+  }
+
+  const endDrag = (ev) => {
+    if (!dragRef.current) return
+    dragRef.current = null
+    ev.currentTarget.releasePointerCapture?.(ev.pointerId)
   }
 
   /**
@@ -591,12 +831,31 @@ export default function SicMap({
           style={{
             width: size.w,
             height: size.h,
-            cursor: pickMode ? 'crosshair' : 'default',
+            cursor: pickMode ? 'crosshair' : (dragRef.current ? 'grabbing' : 'grab'),
           }}
-          onMouseMove={handleMove}
-          onMouseLeave={() => { setHover(null); if (onHoverCell) onHoverCell(null) }}
+          onMouseMove={onPointerMove}
+          onPointerDown={onPointerDown}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onPointerLeave={() => { endDrag({ currentTarget: canvasRef.current }); setHover(null); if (onHoverCell) onHoverCell(null) }}
           onClick={handleClick}
         />
+      </div>
+
+      {/* ------------------------------------------- map controls (zoom) */}
+      <div className="map-ctrls">
+        <button type="button" onClick={() => zoomBy(1.35, size.w / 2, size.h / 2)}
+          title="Zoom in" aria-label="zoom in">+</button>
+        <button type="button" onClick={() => zoomBy(1 / 1.35, size.w / 2, size.h / 2)}
+          title="Zoom out" aria-label="zoom out">−</button>
+        <button type="button" onClick={resetView} title="Reset view"
+          aria-label="reset view">⤢</button>
+        <button type="button" onClick={() => fitToRoute(primaryRoute)}
+          disabled={!primaryRoute || primaryRoute.length < 2}
+          title="Fit the current route" aria-label="fit route">◎</button>
+        {geo.zoom > 1.01 ? (
+          <span className="map-zoom">{geo.zoom.toFixed(1)}×</span>
+        ) : null}
       </div>
 
       {/* ---------------- TOP LEFT · which field is on screen ---------------- */}
@@ -638,12 +897,14 @@ export default function SicMap({
             {hud.showRoute ? (
               <>
                 <span><i className="sw-route" />route</span>
-                {hud.hasReroute ? <span><i className="sw-orig" />original</span> : null}
+                {hud.hasReroute ? <span><i className="sw-orig" />original (D{hud.originStep})</span> : null}
+                {hud.changedCells ? <span><i className="sw-changed" />changed ({hud.changedCells})</span> : null}
                 <span><i className="sw-start" />start</span>
                 <span><i className="sw-goal" />dest</span>
               </>
             ) : null}
           </div>
+          {hud.navStats ? <div className="ovb-legend-stats">{hud.navStats}</div> : null}
         </div>
       </div>
 
@@ -700,6 +961,74 @@ export default function SicMap({
 }
 
 /**
+ * Real Antarctic land polygons, drawn as a dark cartographic basemap.
+ *
+ * The continent is filled slightly lighter than the ocean and outlined with a
+ * cool hairline, so the coastline reads as geography rather than as data. It
+ * is drawn UNDER the SIC raster, whose open water is nearly transparent, so
+ * the two layers compose instead of fighting.
+ *
+ * Rings are clipped against Antarctica's polar wrap: a polygon edge that
+ * leaves the visible longitude window is closed along the window edge instead
+ * of being drawn as a line across the plate.
+ */
+function drawCoastline(ctx, coastline, x, y, maxY) {
+  const feats = coastline?.features
+  if (!feats || !feats.length) return
+
+  ctx.save()
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+
+  for (const f of feats) {
+    const geom = f.geometry
+    if (!geom) continue
+    const polys = geom.type === 'Polygon' ? [geom.coordinates]
+      : geom.type === 'MultiPolygon' ? geom.coordinates : []
+    for (const poly of polys) {
+      for (const ring of poly) {
+        if (!ring || ring.length < 3) continue
+
+        // Split the ring wherever it wraps the antimeridian so each piece can
+        // be closed cleanly inside the projected window.
+        const pieces = []
+        let cur = []
+        let prevX = null
+        for (const pt of ring) {
+          const px = x(pt[0])
+          const py = Math.min(y(pt[1]), maxY)
+          if (prevX != null && Math.abs(px - prevX) > 4000) {
+            if (cur.length > 2) pieces.push(cur)
+            cur = []
+          }
+          cur.push([px, py])
+          prevX = px
+        }
+        if (cur.length > 2) pieces.push(cur)
+
+        for (const piece of pieces) {
+          // Antarctica encircles the pole, so its ring must be closed along the
+          // bottom of the view rather than by a straight chord from the last
+          // vertex back to the first — that chord would cut a false line
+          // straight across the Southern Ocean.
+          ctx.beginPath()
+          piece.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)))
+          ctx.lineTo(piece[piece.length - 1][0], maxY)
+          ctx.lineTo(piece[0][0], maxY)
+          ctx.closePath()
+          ctx.fillStyle = `rgba(${LAND_FILL.join(',')},0.95)`
+          ctx.fill()
+          ctx.strokeStyle = COAST_STROKE
+          ctx.lineWidth = 1.2
+          ctx.stroke()
+        }
+      }
+    }
+  }
+  ctx.restore()
+}
+
+/**
  * Pending start / destination, drawn before a route exists.
  *
  * These are operator selections, not results: they are shown as hollow rings
@@ -708,6 +1037,9 @@ export default function SicMap({
  * the backend still has the final say when the route is requested.
  */
 function drawSelection(ctx, x, y, selection, scale, geo) {
+  // Clamp labels against the CURRENT (possibly zoomed/panned) plate rect.
+  const rx = x(geo.lonMin)
+  const rw = geo.vw
   const ring = (cell, color, label) => {
     if (!cell) return
     const px = x(selection.lon[cell.col])
@@ -722,7 +1054,7 @@ function drawSelection(ctx, x, y, selection, scale, geo) {
     ctx.fillStyle = color; ctx.fill()
     ctx.font = 'bold 11px ui-sans-serif, system-ui, sans-serif'
     ctx.textBaseline = 'bottom'
-    const leftEdge = px - 60 < geo.x0
+    const leftEdge = px - 60 < rx
     ctx.textAlign = leftEdge ? 'left' : 'right'
     ctx.fillStyle = color
     ctx.fillText(label, px + (leftEdge ? 20 : -20), py - 8)

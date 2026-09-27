@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchMetadata, fetchSystemStatus, fetchLimitations, fetchSlice, cachedSlice,
-  fetchUncertainty, cachedUncertainty, fetchCurrent, buildDiff,
+  fetchUncertainty, cachedUncertainty, fetchCurrent, fetchCoastline, buildDiff,
   optimizeRoute, rerouteRoute,
 } from './api.js'
 import SicMap from './components/SicMap.jsx'
@@ -49,6 +49,7 @@ export default function App() {
   const [status, setStatus] = useState(null)
   const [limitations, setLimitations] = useState(null)
   const [cmems, setCmems] = useState(null)
+  const [coastline, setCoastline] = useState(null)
   const [fatal, setFatal] = useState(null)
 
   const [start, setStart] = useState(BASELINE.start)
@@ -81,16 +82,19 @@ export default function App() {
     let alive = true
     ;(async () => {
       try {
-        const [m, s, lim, cur] = await Promise.all([
+        const [m, s, lim, cur, coast] = await Promise.all([
           fetchMetadata(), fetchSystemStatus(), fetchLimitations(), fetchCurrent(0),
+          fetchCoastline(),
         ])
         if (!alive) return
         setMeta(m)
         setStatus(s)
         setLimitations(lim)
         setCmems(cur)
+        setCoastline(coast)
       } catch (e) {
-        if (alive) setFatal(e.message)
+        if (!alive) return
+        setFatal(e.message)
       }
     })()
     return () => { alive = false }
@@ -329,6 +333,7 @@ export default function App() {
             selection={selection}
             pickMode={pickMode}
             onPickCell={onPickCell}
+            coastline={coastline}
             pulseT={null}
             vesselT={vesselT}
             corridorUnchanged={!!rr && rr.route_comparison.identical_path}
@@ -345,6 +350,13 @@ export default function App() {
               start: `${dms(start.lat, 'N', 'S')} ${dms(start.lon, 'E', 'W')}`,
               goal: `${dms(goal.lat, 'N', 'S')} ${dms(goal.lon, 'E', 'W')}`,
               hasReroute: !!rr,
+              originStep: rr?.origin_timestep ?? null,
+              changedCells: changedCells ? changedCells.size : 0,
+              navStats: s
+                ? `navigable ${s.n_navigable.toLocaleString()}`
+                  + `${navPct != null ? ` (${navPct.toFixed(1)}%)` : ''}`
+                  + ` · non-navigable ${s.n_non_navigable.toLocaleString()}`
+                : null,
               nonNav: true,
               vessel: null,
               source: 'routing_sic_2026.npy (API raster)',
@@ -354,18 +366,21 @@ export default function App() {
           {/* ----------------------------- pipeline strip (top centre) */}
           <div className="float pipeline" aria-label="pipeline">
             {[
-              ['INPUT', `${dms(start.lat, 'N', 'S')}, ${dms(start.lon, 'E', 'W')} → ${dms(goal.lat, 'N', 'S')}, ${dms(goal.lon, 'E', 'W')}`],
-              ['SIC FIELD', `D${slice?.timestep ?? timestep} · ${slice?.date ?? '—'}`],
-              ['NAVIGABILITY', s ? `${s.n_navigable.toLocaleString()} cells` : '—'],
-              ['COST MAP', 'SIC + distance'],
-              ['A* + COSTMAP', busy.optimize ? 'running…' : 'ready'],
-              ['ROUTE', plan ? `${plan.waypoints} wp` : '—'],
-              ['VALIDATION', plan ? (plan.nan_cells === 0 ? 'PASS' : 'FAIL') : '—'],
-            ].map(([k, v], i, arr) => (
+              ['INPUT',
+                `${dms(start.lat, 'N', 'S')}, ${dms(start.lon, 'E', 'W')} → ${dms(goal.lat, 'N', 'S')}, ${dms(goal.lon, 'E', 'W')}`,
+                `${dms(start.lat, 'N', 'S')} → ${dms(goal.lat, 'N', 'S')}`],
+              ['SIC FIELD', `D${slice?.timestep ?? timestep} · ${slice?.date ?? '—'}`, `D${slice?.timestep ?? timestep}`],
+              ['NAVIGABILITY', s ? `${s.n_navigable.toLocaleString()} cells` : '—', s ? `${s.n_navigable.toLocaleString()}` : '—'],
+              ['COST MAP', 'SIC + distance', 'SIC+dist'],
+              ['A* + COSTMAP', busy.optimize ? 'running…' : 'ready', busy.optimize ? '…' : 'ready'],
+              ['ROUTE', plan ? `${plan.waypoints} wp` : '—', plan ? `${plan.waypoints}` : '—'],
+              ['VALIDATION', plan ? (plan.nan_cells === 0 ? 'PASS' : 'FAIL') : '—', plan ? (plan.nan_cells === 0 ? 'PASS' : 'FAIL') : '—'],
+            ].map(([k, long, short], i, arr) => (
               <React.Fragment key={k}>
                 <div className={`pl-step ${k === 'VALIDATION' && plan ? (plan.nan_cells === 0 ? 'ok' : 'bad') : ''}`}>
                   <span className="pl-k">{k}</span>
-                  <span className="pl-v">{v}</span>
+                  <span className="pl-v long">{long}</span>
+                  <span className="pl-v short">{short}</span>
                 </div>
                 {i < arr.length - 1 ? <span className="pl-arrow">→</span> : null}
               </React.Fragment>
@@ -380,6 +395,7 @@ export default function App() {
             </div>
 
             <Endpoint
+              id="start"
               label="START"
               value={start}
               onChange={setStart}
@@ -387,6 +403,7 @@ export default function App() {
               picking={pickMode === 'start'}
             />
             <Endpoint
+              id="goal"
               label="DESTINATION"
               value={goal}
               onChange={setGoal}
@@ -456,27 +473,6 @@ export default function App() {
 
             {notice ? <div className={`fc-notice ${notice.tone}`}>{notice.text}</div> : null}
           </aside>
-
-          {/* ------------------------------------------- legend (bottom) */}
-          <div className="float legend-card">
-            <div className="lg-t">SIC 0 → 1</div>
-            <div className="lg-ramp" />
-            <div className="lg-keys">
-              <span><i className="sw-nonnav" />non-navigable (NaN)</span>
-              <span><i className="sw-route" />route</span>
-              {rr ? <span><i className="sw-orig" />original (D{rr.origin_timestep})</span> : null}
-              {changedCells && changedCells.size ? <span><i className="sw-changed" />changed ({changedCells.size})</span> : null}
-              <span><i className="sw-start" />start</span>
-              <span><i className="sw-goal" />dest</span>
-            </div>
-            {s ? (
-              <div className="lg-stats">
-                navigable <b>{s.n_navigable.toLocaleString()}</b>
-                {navPct != null ? ` (${navPct.toFixed(1)}%)` : ''} · non-navigable{' '}
-                <b>{s.n_non_navigable.toLocaleString()}</b>
-              </div>
-            ) : null}
-          </div>
         </section>
 
         {/* ============================================ RIGHT RAIL */}
@@ -514,9 +510,9 @@ export default function App() {
 /* ------------------------------------------------------------------ */
 /* Endpoint editor                                                     */
 /* ------------------------------------------------------------------ */
-function Endpoint({ label, value, onChange, onPick, picking }) {
+function Endpoint({ label, value, onChange, onPick, picking, id }) {
   return (
-    <div className={`ep ${picking ? 'picking' : ''}`}>
+    <div className={`ep ${picking ? 'picking' : ''}`} data-ep={id}>
       <div className="ep-h">
         <span className="ep-lab">{label}</span>
         <button type="button" className="btn btn-ghost xs" onClick={onPick}>

@@ -137,6 +137,16 @@ export const fetchReroute = (timestep, originTimestep = REROUTE_ORIGIN_STEP) =>
 
 export const fetchCurrent = (timestep) => getJSON(`/api/current/${timestep}`)
 
+/**
+ * Real Antarctic coastline for the basemap layer (GeoJSON, map context only).
+ * Cached once: it never changes with the timestep.
+ */
+let coastlinePromise = null
+export function fetchCoastline() {
+  if (!coastlinePromise) coastlinePromise = getJSON('/api/map/coastline')
+  return coastlinePromise
+}
+
 /* ------------------------------------------------------------------ */
 /* Frame payloads (lazy: only the selected step is ever requested)     */
 /* ------------------------------------------------------------------ */
@@ -233,6 +243,19 @@ const RAMP = [
   [232, 244, 251], // ~0.90
   [255, 255, 255], // 1.00  consolidated ice
 ]
+
+/**
+ * Per-cell opacity for the SIC raster.
+ *
+ * The basemap has to stay readable underneath, and the route has to stay the
+ * loudest thing on the plate. So open water is almost transparent and opacity
+ * rises with concentration: the ice edge and the consolidated pack are the
+ * only parts of the raster that assert themselves. This is a display choice
+ * only — the values served by the API are untouched.
+ */
+export function sicAlpha(v) {
+  return Math.min(255, 62 + 193 * Math.pow(Math.max(0, Math.min(1, v)), 0.58))
+}
 
 export function sicColor(v) {
   const t = Math.max(0, Math.min(1, v)) * (RAMP.length - 1)
