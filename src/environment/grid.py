@@ -15,7 +15,7 @@ Designed to later accept outputs from:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -41,6 +41,9 @@ class EnvironmentalGrid:
         iceberg_uncertainty     : iceberg positional uncertainty (km, >= 0)
         wind_cost               : wind-related traversal cost multiplier (>= 0)
         current_cost            : current-related traversal cost (knots, negative=favorable)
+        depth                   : water depth in m, positive downwards; NaN = unknown
+        ice_multiplier          : committed POLARIS-style ice-cost heuristic
+                                  (1.0 / 2.0 / 8.0 / 50.0 / +inf impassable)
     """
 
     n_rows: int
@@ -68,6 +71,27 @@ class EnvironmentalGrid:
     # current_cost (above) remains for backward-compatible scalar cost.
     current_uo: Optional[np.ndarray] = None
     current_vo: Optional[np.ndarray] = None
+
+    # Water depth in metres, positive downwards (GEBCO convention:
+    # negative elevation = below sea level, so depth = -elevation).
+    # NaN means "depth unknown" and is never treated as deep water.
+    depth: Optional[np.ndarray] = None
+
+    # Committed POLARIS-style ice-cost heuristic, per cell, taken verbatim
+    # from backend/cache/routing_multiplier_2026.npy
+    # (open 1.0 / marginal 2.0 / moderate 8.0 / hard 50.0 / impassable inf).
+    # Read-only provenance: SICForecastField.multiplier() is the accessor.
+    # +inf is the authoritative "impassable" class; it is a real value, not
+    # missing data, and is distinct from NaN.
+    ice_multiplier: Optional[np.ndarray] = None
+
+    # Per-layer availability, e.g. {"sic_mean": "REAL", "wind_cost":
+    # "NOT_AVAILABLE"}.  Populated by src/data/layer_status.py so that a
+    # layer can never be reported as integrated without evidence.
+    layer_status: Optional[Dict[str, str]] = None
+
+    # Free-form provenance for each layer (source path, reason, notes).
+    layer_provenance: Optional[Dict[str, Dict[str, Any]]] = None
 
     # Metadata
     resolution_deg: float = 0.05
@@ -99,6 +123,8 @@ class EnvironmentalGrid:
             ("current_cost", self.current_cost),
             ("current_uo", self.current_uo),
             ("current_vo", self.current_vo),
+            ("depth", self.depth),
+            ("ice_multiplier", self.ice_multiplier),
         ]
         for name, arr in optional:
             if arr is not None:
@@ -134,6 +160,8 @@ class EnvironmentalGrid:
         "current_cost",
         "current_uo",
         "current_vo",
+        "depth",
+        "ice_multiplier",
     ]
 
     def cell_cost_factors(self, row: int, col: int) -> dict:

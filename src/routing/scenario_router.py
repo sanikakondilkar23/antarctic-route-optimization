@@ -500,7 +500,7 @@ def select_robust_route(
         _, det_cvar = compute_cvar(det_costs, alpha)
         det_mean = float(np.mean(det_costs))
     else:
-        det_result = RouteResult(False, [], 0.0, 0.0, 0)
+        det_result = RouteResult(False, [], 0.0, 0.0, 0, 0.0)
         det_cvar = float("inf")
         det_mean = float("inf")
 

@@ -115,6 +115,13 @@ class BaseAdapter(ABC):
                         if template.current_uo is not None else None),
             current_vo=(template.current_vo.copy()
                         if template.current_vo is not None else None),
+            depth=template.depth.copy() if template.depth is not None else None,
+            ice_multiplier=(template.ice_multiplier.copy()
+                            if template.ice_multiplier is not None else None),
+            layer_status=(dict(template.layer_status)
+                          if template.layer_status is not None else None),
+            layer_provenance=(dict(template.layer_provenance)
+                              if template.layer_provenance is not None else None),
             resolution_deg=template.resolution_deg,
         )
 
@@ -327,14 +334,17 @@ class SICAdapter(BaseAdapter):
         lats_src = self._src_lats
         lons_src = self._src_lons
 
-        # RegularGridInterpolator requires finite values; use nanmean for NaN
-        # fill at source grid edges only — interior NaN stays NaN after interp
-        fill_val = float(np.nanmean(data)) if not np.all(np.isnan(data)) else 0.0
+        # Out-of-extent target cells are filled with NaN, never with the mean
+        # of the source field: a target cell the source does not cover has no
+        # measurement, and substituting a domain average would silently invent
+        # one.  Interior NaN is carried through by ``method="nearest"``.
+        fill_val = np.nan
 
         interp = RegularGridInterpolator(
             (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=fill_val,
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
+
 
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)
         target_points = np.stack([lat_mesh.ravel(), lon_mesh.ravel()], axis=-1)
@@ -428,7 +438,9 @@ class CMEMSCurrentAdapter(BaseAdapter):
         grid = self._copy_grid(grid_template)
 
         if not self.is_available():
-            grid.current_cost = np.zeros((grid.n_rows, grid.n_cols))
+            grid.current_cost = np.full((grid.n_rows, grid.n_cols), np.nan)
+            grid.current_uo = np.full((grid.n_rows, grid.n_cols), np.nan)
+            grid.current_vo = np.full((grid.n_rows, grid.n_cols), np.nan)
             return grid
 
         self._open_dataset()
@@ -471,8 +483,8 @@ class CMEMSCurrentAdapter(BaseAdapter):
         # Read values and fill NaN with 0
         uo = da_uo_t.values.astype(np.float64)
         vo = da_vo_t.values.astype(np.float64)
-        uo = np.nan_to_num(uo, nan=0.0)
-        vo = np.nan_to_num(vo, nan=0.0)
+        # NaN preserved: a cell without a current measurement is not a cell
+        # with zero current.  The cost map omits the term there and counts it.
 
         # Compute current speed (always >= 0)
         speed = np.sqrt(uo ** 2 + vo ** 2)
@@ -488,10 +500,12 @@ class CMEMSCurrentAdapter(BaseAdapter):
                 uo = self._interpolate_to_grid(uo, grid, lats_src, lons_src)
                 vo = self._interpolate_to_grid(vo, grid, lats_src, lons_src)
             else:
-                grid.current_cost = speed[:grid.n_rows, :grid.n_cols]
-                grid.current_uo = uo[:grid.n_rows, :grid.n_cols]
-                grid.current_vo = vo[:grid.n_rows, :grid.n_cols]
-                return grid
+                raise ValueError(
+                    f"current field shape {speed.shape} is not a 2-D "
+                    "lat/lon field with 1-D coordinate axes, so it cannot be "
+                    "aligned to the route grid. The adapter will not crop by "
+                    "array index, because that assumes a spatial alignment "
+                    "that has not been verified.")
 
         grid.current_cost = speed
         grid.current_uo = uo
@@ -502,16 +516,28 @@ class CMEMSCurrentAdapter(BaseAdapter):
         self, data: np.ndarray, grid: EnvironmentalGrid,
         lats_src: np.ndarray = None, lons_src: np.ndarray = None,
     ) -> np.ndarray:
-        """Simple nearest-neighbor interpolation to target grid shape."""
+        """Nearest-neighbour resampling onto the route grid by coordinate."""
         from scipy.interpolate import RegularGridInterpolator
 
         if lats_src is None or lons_src is None:
-            lats_src = self._ds[self.lat_dim].values
-            lons_src = self._ds[self.lon_dim].values
+            raise ValueError(
+                "cannot align the current field to the route grid: the source "
+                "latitude/longitude axes are unknown. The adapter will not "
+                "crop by array index, because that assumes a spatial "
+                "alignment that has not been verified.")
 
+        lats_src = np.asarray(lats_src, dtype=np.float64)
+        lons_src = np.asarray(lons_src, dtype=np.float64)
+        data = np.asarray(data, dtype=np.float64)
+        if lats_src.size != data.shape[0] or lons_src.size != data.shape[1]:
+            raise ValueError(
+                f"current field {data.shape} does not match its coordinate "
+                f"axes ({lats_src.size}, {lons_src.size})")
+
+        order = np.argsort(lats_src)
         interp = RegularGridInterpolator(
-            (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=0.0,
+            (lats_src[order], lons_src), data[order],
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
 
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)
@@ -548,6 +574,10 @@ class IcebergAdapter(BaseAdapter):
         time_dim: str = "time",
         lat_dim: str = "lat",
         lon_dim: str = "lon",
+        dates_path: Optional[str] = None,
+        route_start_datetime=None,
+        src_lat: Optional[np.ndarray] = None,
+        src_lon: Optional[np.ndarray] = None,
     ):
         super().__init__(path)
         self.variable = variable
@@ -555,14 +585,19 @@ class IcebergAdapter(BaseAdapter):
         self.time_dim = time_dim
         self.lat_dim = lat_dim
         self.lon_dim = lon_dim
+        self.dates_path = dates_path
+        self.route_start_datetime = route_start_datetime
+        self.src_lat = src_lat
+        self.src_lon = src_lon
         self._data = None
+        self._dates = None
 
     def load(self, t_hours: float, grid_template: EnvironmentalGrid) -> EnvironmentalGrid:
         """Load iceberg risk at time t and populate iceberg_risk on the grid."""
         grid = self._copy_grid(grid_template)
 
         if not self.is_available():
-            grid.iceberg_risk = np.zeros((grid.n_rows, grid.n_cols))
+            grid.iceberg_risk = np.full((grid.n_rows, grid.n_cols), np.nan)
             return grid
 
         risk = self._load_data(t_hours)
@@ -588,32 +623,77 @@ class IcebergAdapter(BaseAdapter):
                 da = da.sel({self.time_dim: t_hours}, method="nearest")
             data = da.values.astype(np.float64)
 
-        # If 3D [time, lat, lon], take the relevant time slice
+        # If 3D [time, lat, lon], the requested time slice must be selected.
+        # A companion dates array is required: silently returning frame 0 for
+        # every requested time would report one forecast step as if it were
+        # all of them.
         if data.ndim == 3:
-            # Find time index closest to t_hours
-            data = data[0]  # default to first time step
+            data = data[self._time_index(data.shape[0], t_hours)]
 
         return data
+
+    def _time_index(self, n_time: int, t_hours: float) -> int:
+        """Index of the frame closest to ``t_hours``; raises if unknowable."""
+        if self._dates is None:
+            if self.dates_path and Path(self.dates_path).is_file():
+                self._dates = np.load(str(self.dates_path),
+                                      allow_pickle=True).astype("datetime64[ns]")
+            elif self.route_start_datetime is not None:
+                base = np.datetime64(self.route_start_datetime, "ns")
+                self._dates = base + np.arange(n_time) * np.timedelta64(1, "D")
+
+        if self._dates is None or len(self._dates) != n_time:
+            raise ValueError(
+                "iceberg risk array has a time axis of length "
+                f"{n_time} but no matching dates are available, so the frame "
+                f"for t_hours={t_hours} cannot be identified. Pass "
+                "dates_path= or route_start_datetime= to IcebergAdapter; the "
+                "adapter will not default to the first timestep.")
+
+        if self.route_start_datetime is not None:
+            target = np.datetime64(
+                self.route_start_datetime, "ns") + np.timedelta64(
+                    int(round(t_hours * 3600 * 1e6)), "us")
+        else:
+            target = self._dates[0] + np.timedelta64(
+                int(round(t_hours * 3600 * 1e6)), "us")
+
+        return int(np.argmin(np.abs(self._dates - target)))
 
     def _interpolate_to_grid(
         self, data: np.ndarray, grid: EnvironmentalGrid,
     ) -> np.ndarray:
-        """Simple nearest-neighbor interpolation."""
-        if not HAS_XARRAY or self.is_numpy:
-            # For numpy-only: use simple resampling
-            from scipy.ndimage import zoom
-            zoom_factors = (grid.n_rows / data.shape[0],
-                            grid.n_cols / data.shape[1])
-            return zoom(data, zoom_factors, order=0)
-
+        """Nearest-neighbour resampling onto the route grid."""
         from scipy.interpolate import RegularGridInterpolator
-        ds = xr.open_dataset(self._path)
-        lats_src = ds[self.lat_dim].values
-        lons_src = ds[self.lon_dim].values
 
+        if self.is_numpy or not HAS_XARRAY:
+            lats_src = self.src_lat
+            lons_src = self.src_lon
+            if lats_src is None or lons_src is None:
+                raise ValueError(
+                    "iceberg risk was supplied as a bare array with no "
+                    "coordinates, so it cannot be aligned to the route grid. "
+                    "Pass src_lat=/src_lon= (the 1-D axes of the array) or "
+                    "supply a netCDF file. The adapter will not resample by "
+                    "array index, because that assumes a spatial alignment "
+                    "that has not been verified.")
+        else:
+            ds = xr.open_dataset(self._path)
+            lats_src = ds[self.lat_dim].values
+            lons_src = ds[self.lon_dim].values
+            ds.close()
+
+        lats_src = np.asarray(lats_src, dtype=np.float64)
+        lons_src = np.asarray(lons_src, dtype=np.float64)
+        if lats_src.size != data.shape[0] or lons_src.size != data.shape[1]:
+            raise ValueError(
+                f"iceberg risk array {data.shape} does not match its "
+                f"coordinate axes ({lats_src.size}, {lons_src.size})")
+
+        order = np.argsort(lats_src)
         interp = RegularGridInterpolator(
-            (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=0.0,
+            (lats_src[order], lons_src), np.asarray(data)[order],
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)
         target = np.stack([lat_mesh.ravel(), lon_mesh.ravel()], axis=-1)
@@ -668,7 +748,7 @@ class WindAdapter(BaseAdapter):
         grid = self._copy_grid(grid_template)
 
         if not self.is_available():
-            grid.wind_cost = np.zeros((grid.n_rows, grid.n_cols))
+            grid.wind_cost = np.full((grid.n_rows, grid.n_cols), np.nan)
             return grid
 
         self._open_dataset()
@@ -704,7 +784,7 @@ class WindAdapter(BaseAdapter):
 
         interp = RegularGridInterpolator(
             (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=0.0,
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)
         target = np.stack([lat_mesh.ravel(), lon_mesh.ravel()], axis=-1)
@@ -758,21 +838,27 @@ class BathymetryAdapter(BaseAdapter):
         grid = self._copy_grid(grid_template)
 
         if not self.is_available():
+            grid.depth = np.full((grid.n_rows, grid.n_cols), np.nan)
             return grid
 
         self._open_dataset()
         ds = self._ds
 
         da = ds[self.depth_var]
-        depth = da.values.astype(np.float64)
+        elevation = da.values.astype(np.float64)
 
-        if depth.shape != (grid.n_rows, grid.n_cols):
-            depth = self._interpolate_to_grid(depth, grid)
+        if elevation.shape != (grid.n_rows, grid.n_cols):
+            elevation = self._interpolate_to_grid(elevation, grid)
 
-        # Update navigability: cells deeper than vessel draft are navigable
-        # GEBCO: negative = below sea level, so depth > -vessel_draft means too shallow
-        navigable = depth < -self.vessel_draft_m
-        # Combine with existing navigability
+        # GEBCO elevation is negative below sea level; depth is positive down.
+        depth = -np.asarray(elevation, dtype=np.float64)
+        depth[~np.isfinite(depth)] = np.nan
+        grid.depth = depth
+
+        # Update navigability: cells deeper than vessel draft are navigable.
+        # Unknown depth fails closed -- NaN < -draft is False -- so a cell with
+        # no bathymetry is never assumed navigable.
+        navigable = depth > self.vessel_draft_m
         grid.navigable = grid.navigable & navigable
 
         return grid
@@ -782,12 +868,18 @@ class BathymetryAdapter(BaseAdapter):
     ) -> np.ndarray:
         from scipy.interpolate import RegularGridInterpolator
 
-        lats_src = self._ds[self.lat_dim].values
-        lons_src = self._ds[self.lon_dim].values
+        lats_src = np.asarray(self._ds[self.lat_dim].values, dtype=np.float64)
+        lons_src = np.asarray(self._ds[self.lon_dim].values, dtype=np.float64)
+        data = np.asarray(data, dtype=np.float64)
+        if lats_src.size != data.shape[0] or lons_src.size != data.shape[1]:
+            raise ValueError(
+                f"bathymetry {data.shape} does not match its coordinate axes "
+                f"({lats_src.size}, {lons_src.size})")
+        order = np.argsort(lats_src)
 
         interp = RegularGridInterpolator(
-            (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=0.0,
+            (lats_src[order], lons_src), data[order],
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)
         target = np.stack([lat_mesh.ravel(), lon_mesh.ravel()], axis=-1)
@@ -880,7 +972,9 @@ class CMEMSDateAwareAdapter(BaseAdapter):
         grid = self._copy_grid(grid_template)
 
         if not self.is_available():
-            grid.current_cost = np.zeros((grid.n_rows, grid.n_cols))
+            grid.current_cost = np.full((grid.n_rows, grid.n_cols), np.nan)
+            grid.current_uo = np.full((grid.n_rows, grid.n_cols), np.nan)
+            grid.current_vo = np.full((grid.n_rows, grid.n_cols), np.nan)
             return grid
 
         # Round t_hours to avoid floating-point key issues; CMEMS has
@@ -933,11 +1027,15 @@ class CMEMSDateAwareAdapter(BaseAdapter):
         from scipy.interpolate import RegularGridInterpolator
 
         if lats_src is None or lons_src is None:
-            return data[:grid.n_rows, :grid.n_cols]
+            raise ValueError(
+                "cannot align this layer to the route grid: the source "
+                "latitude/longitude axes are unknown. The adapter will not "
+                "crop by array index, because that assumes a spatial "
+                "alignment that has not been verified.")
 
         interp = RegularGridInterpolator(
             (lats_src, lons_src), data,
-            method="nearest", bounds_error=False, fill_value=0.0,
+            method="nearest", bounds_error=False, fill_value=np.nan,
         )
 
         lon_mesh, lat_mesh = np.meshgrid(grid.lon, grid.lat)

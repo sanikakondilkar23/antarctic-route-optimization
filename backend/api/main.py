@@ -70,8 +70,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.data import paths as data_paths                          # noqa: E402
 from src.data.builder import build_grid_template           # noqa: E402
+from src.data.layer_status import registry_to_dict        # noqa: E402
 from src.data.sic_forecast import SICForecastField        # noqa: E402
+from src.data.unified import build_route_grid             # noqa: E402
 from src.routing.astar import astar                        # noqa: E402
 from src.routing.cost import CostWeights                   # noqa: E402
 from src.routing.scenario_router import (                  # noqa: E402
@@ -107,21 +110,95 @@ ICEBERG_CANDIDATES = [
 ]
 
 ROUTE_START = datetime(2026, 1, 6, tzinfo=timezone.utc)
-DEFAULT_START = (172, 368)   # Cape Town, from the verified route artifact
-DEFAULT_GOAL = (20, 82)      # Maitri, from the verified route artifact
+#: Row/col defaults are used ONLY by the GET endpoints, which take grid indices
+#: directly and therefore cannot snap. The default start must therefore be a
+#: cell that is navigable on the routing grid.
+#:
+#: Cell (164, 114) is Cape Town's own 0.25 deg cell, but the real GEBCO land
+#: mask correctly marks it as land, so A* cannot start there; the geographic
+#: endpoints in POST /api/route/optimize snap to the neighbouring ocean cell
+#: (163, 114) and route fine. Pointing a row/col default at a land cell just
+#: makes every GET route fail.
+#:
+#: (172, 368) is the start cell of the project's verified real-SIC baseline
+#: route (outputs/final_demo/final_route.json) and is navigable, so it is the
+#: default that matches the recorded verification.
+DEFAULT_START = (172, 368)
+DEFAULT_GOAL = (20, 82)      # Maitri offshore approach cell (routing_station_goals.json)
+
+#: Cost weights are configurable so that no term is silently enabled.  A term
+#: only reaches the route when its weight is above zero AND its layer carries
+#: finite data; both facts are reported per request in ``layer_status``.
+WEIGHT_ENVVARS = {
+    "w_sic": "SIH_W_SIC",
+    "w_ice": "SIH_W_ICE",
+    "w_wind": "SIH_W_WIND",
+    "w_curr": "SIH_W_CURR",
+    "w_distance": "SIH_W_DISTANCE",
+    "w_depth": "SIH_W_DEPTH",
+    "w_unc": "SIH_W_UNC",
+    "w_ice_class": "SIH_W_ICE_CLASS",
+    "vessel_draft_m": "SIH_VESSEL_DRAFT_M",
+}
+
+
+def cost_weights() -> CostWeights:
+    """Build :class:`CostWeights` from the environment, defaulting to the
+    project's documented objective (``w_sic`` and ``w_distance`` only)."""
+    values: Dict[str, float] = {}
+    for name, envvar in WEIGHT_ENVVARS.items():
+        raw = os.environ.get(envvar)
+        if raw is None or raw == "":
+            continue
+        try:
+            values[name] = float(raw)
+        except ValueError:
+            raise RouteRequestError(
+                f"{envvar} must be a number, got {raw!r}", "invalid_weight",
+                weight=name)
+    return CostWeights(**values)
 
 LIMITATIONS: Dict[str, str] = {
     "sic": "REAL committed forecast output (backend/cache/routing_sic_2026.npy). "
            "NaN cells are non-navigable and are never zero-filled.",
-    "cmems": "Unavailable in the current Windows demo environment "
-             "(Google Drive not mounted). No currents are shown or faked.",
-    "cvar": "Unavailable - iceberg risk / uncertainty layers are not present, "
-            "so no CVaR value is computed or claimed.",
+    "uncertainty": "REAL committed artifact (backend/cache/uncertainty_2026.npy, "
+                   "3 lead-time horizons). Present on the grid; it reaches the "
+                   "cost only when SIH_W_UNC > 0.",
+    "depth": "NOT AVAILABLE in this deployment. The committed GEBCO land mask "
+             "(routing_land_extension.npy) IS applied to the extension band, so "
+             "land is not routable, but no GEBCO depth field is loaded, so no "
+             "depth penalty is computed. Set SIH_DATA_ROOT and SIH_W_DEPTH>0 to "
+             "activate it.",
+    "wind": "NOT AVAILABLE. No ERA5/ECMWF dataset is reachable, so wind_cost is "
+            "absent and contributes nothing. No wind is faked.",
+    "cmems": "Unavailable in the current development environment. No currents "
+             "are shown or faked. The CMEMS loader now also accepts 2026 "
+             "forecast products (CMEMS_Future_Forecast), which no reanalysis "
+             "covers.",
+    "iceberg": "NOT AVAILABLE. src/data/adapters.py::IcebergAdapter reads a risk "
+               "field, but no predictor output exists, so iceberg_risk is absent "
+               "and the iceberg standoff term is not computed.",
+    "ice_multiplier": "The committed POLARIS-style multiplier "
+                      "(routing_multiplier_2026.npy) is applied only when "
+                      "SIH_W_ICE_CLASS > 0. With the default 0 the SIC cost is "
+                      "linear in SIC, so consolidated ice is not impassable.",
+    "cvar": "UNAVAILABLE. src/uncertainty/cvar.py and "
+            "src/routing/scenario_router.py::select_robust_route are valid code "
+            "but are not reachable from this API, and "
+            "src/uncertainty/scenarios.py::generate_scenarios requires "
+            "iceberg_risk_uncertainty, which has no data source. No CVaR value "
+            "is computed or claimed. At the default alpha=0.05 with 20 "
+            "scenarios the tail size is 1, so CVaR would equal VaR equals the "
+            "worst case rather than a tail mean.",
     "route_ml": "Policy checkpoint present (outputs/ml/route_policy.pt), "
                 "trained on synthetic 20x25 smoke data; not used as a "
                 "real-world accuracy claim and not used to produce this route.",
     "route": "Deterministic A* + CostMap on the real SIC field.",
+    "land_mask": "The model band (-75..-50) carries a land mask through SIC NaN. "
+                 "The extension band (-50..-32) is masked from the committed "
+                 "GEBCO artifact. No GEBCO depth field is loaded.",
 }
+
 
 
 # ---------------------------------------------------------------------------
@@ -240,13 +317,31 @@ def cached_stats(t: int) -> Dict[str, Any]:
 
 
 @lru_cache(maxsize=16)
+def route_grid(t: int, weights_key: str):
+    """
+    Unified EnvironmentalGrid + CostMap + provenance for one real timestep.
+
+    Every environmental layer that is genuinely reachable in this deployment is
+    attached here and nowhere else, so the grid the optimizer consumes is the
+    grid whose provenance is reported.  Layers whose dataset is missing stay
+    absent and are reported ``NOT_AVAILABLE``.
+    """
+    weights = cost_weights()
+    return build_route_grid(
+        t, cache_dir=CACHE, route_start=ROUTE_START, weights=weights)
+
+
+def _weights_key() -> str:
+    return json.dumps(cost_weights().to_dict(), sort_keys=True)
+
+
+@lru_cache(maxsize=16)
 def plan_route(t: int, start_row: int, start_col: int,
-               goal_row: int, goal_col: int) -> Dict[str, Any]:
+               goal_row: int, goal_col: int, weights_key: str = "default") -> Dict[str, Any]:
     """Run the repository's existing A* + CostMap on one real SIC timestep."""
-    f = field()
-    grid = f.load(t_hours=float(t) * 24.0, grid_template=native_grid())
+    grid, cost_map, report = route_grid(t, weights_key)
     result = astar(grid, (start_row, start_col), (goal_row, goal_col),
-                   weights=CostWeights())
+                   weights=cost_weights())
     path = [[int(r), int(c)] for r, c in result.path]
     stats: Dict[str, Any] = {"mean_sic": None, "max_sic": None,
                              "nan_cells_on_route": None}
@@ -267,6 +362,11 @@ def plan_route(t: int, start_row: int, start_col: int,
         "total_cost": float(result.total_cost),
         "expanded_nodes": int(result.expanded_nodes),
         "path": path,
+        "layer_status": registry_to_dict(
+            report["registry"],
+            cost_layers=report["cost_breakdown"]["layers_in_cost"],
+            extras={"land_mask": report["land_mask"]}),
+        "cost_breakdown": report["cost_breakdown"],
         **stats,
     }
 
@@ -419,7 +519,8 @@ def direct_length_km(start_rc: Tuple[int, int],
 
 
 def validate_path(grid, path: List[List[int]], start_rc: Tuple[int, int],
-                  goal_rc: Tuple[int, int]) -> Dict[str, Any]:
+                  goal_rc: Tuple[int, int],
+                  cost_layers: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Post-route safety validation.  Returns the check report; raises
     ``RouteRequestError`` if any hard check fails, so a route is only ever
@@ -472,6 +573,50 @@ def validate_path(grid, path: List[List[int]], start_rc: Tuple[int, int],
             f"cells; refusing to return it (NaN is never zero-filled)",
             "unsafe_route_cells",
             non_navigable_cells=non_navigable, nan_cells=nan_cells)
+
+    # SIC safety is the hard requirement and is enforced above: no NaN SIC, no
+    # non-navigable cell, contiguous 8-connected geometry that reaches the goal.
+    #
+    # Everything else is an OPTIONAL cost term. A layer may therefore be real
+    # but only partially covering the grid (uncertainty_2026.npy is 101x361 on
+    # a 173x369 routing grid, so it does not reach the extension band). That
+    # must not veto a route — but it must also never be hidden:
+    #
+    #   w_unc == 0  -> the term did not reach the cost; the route stands and
+    #                  the uncovered cells are reported.
+    #   w_unc  > 0  -> the term IS required where it is applied; if coverage is
+    #                  insufficient the request fails explicitly rather than
+    #                  quietly dropping the penalty.
+    cost_layers = set(cost_layers or ())
+    layer_coverage: Dict[str, Any] = {}
+    insufficient: Dict[str, int] = {}
+    for name in grid.LAYER_NAMES:
+        arr = getattr(grid, name, None)
+        if arr is None:
+            continue
+        values = np.asarray(arr, dtype=np.float64)[rows, cols]
+        missing = int((~np.isfinite(values)).sum())
+        layer_coverage[name] = {
+            "covered_route_cells": int(len(path) - missing),
+            "uncovered_route_cells": missing,
+            "in_cost": name in cost_layers,
+        }
+        if missing and name in cost_layers:
+            insufficient[name] = missing
+
+    report["layer_coverage"] = layer_coverage
+    report["layers_in_cost"] = sorted(cost_layers)
+    if insufficient:
+        detail = ", ".join(f"{k} ({v})" for k, v in sorted(insufficient.items()))
+        raise RouteRequestError(
+            "an uncertainty-aware route was requested, but the enabled cost "
+            f"layer(s) {detail} have no finite value on those route cells. "
+            "The route is refused rather than priced with a missing term; no "
+            "value is ever fabricated to fill the gap.",
+            "insufficient_enabled_layer_coverage",
+            layers=insufficient, enabled_weights=cost_weights().to_dict(),
+            layer_coverage=layer_coverage)
+
     return report
 
 
@@ -542,7 +687,7 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
     except IndexError as exc:
         raise RouteRequestError(str(exc), "timestep_out_of_range", timestep=t)
 
-    grid = f.load(t_hours=float(t) * 24.0, grid_template=native_grid())
+    grid, cost_map, report = route_grid(t, _weights_key())
 
     start = resolve_endpoint("start", start_lat, start_lon, grid,
                              allow_snap, max_snap_cells)
@@ -551,14 +696,17 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
     start_rc = (start["cell"][0], start["cell"][1])
     goal_rc = (goal["cell"][0], goal["cell"][1])
 
-    plan = plan_route(t, start_rc[0], start_rc[1], goal_rc[0], goal_rc[1])
+    wk = _weights_key()
+    plan = plan_route(t, start_rc[0], start_rc[1], goal_rc[0], goal_rc[1], wk)
     if not plan["success"]:
         raise RouteRequestError(
             "A* found no route between the requested endpoints on this SIC "
             "field", "no_route", start=list(start_rc), goal=list(goal_rc))
 
     path: List[List[int]] = plan["path"]
-    validation = validate_path(grid, path, start_rc, goal_rc)
+    validation = validate_path(grid, path, start_rc, goal_rc,
+                               cost_layers=plan.get("cost_breakdown", {})
+                               .get("layers_in_cost"))
 
     spec = f.grid_spec()
     return {
@@ -590,8 +738,10 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
         "expanded_nodes": plan["expanded_nodes"],
         "validation": validation,
         "algorithm": "A* + CostMap (src/routing/astar.py, src/routing/cost.py)",
-        "cost_weights": {"w_sic": 1.0, "w_ice": 1.0, "w_wind": 1.0,
-                         "w_curr": 1.0, "w_distance": 1.0},
+        "cost_weights": cost_weights().to_dict(),
+        "cost_breakdown": report["cost_breakdown"],
+        "layer_status": plan["layer_status"],
+        "environmental_grid": report["grid"],
         "grid": {"n_rows": spec["n_rows"], "n_cols": spec["n_cols"],
                  "resolution_deg": spec["resolution_deg"]},
         "provenance": {
@@ -605,6 +755,8 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
             "nan_policy": "NaN = non-navigable; never zero-filled, never routed",
             "current_policy": "currents are NOT part of this cost "
                               "(CMEMS unavailable); no current is faked",
+            "grid_assembly": "src/data/unified.py::build_route_grid",
+            "land_mask": report["land_mask"],
         },
         "limitations": LIMITATIONS,
     }
@@ -670,7 +822,8 @@ def reroute_route(original: Any, new_timestep: Any,
     start_latlon = endpoint(start if start is not None else original.get("start"), 0)
     goal_latlon = endpoint(goal if goal is not None else original.get("goal"), -1)
 
-    grid = f.load(t_hours=float(nt) * 24.0, grid_template=native_grid())
+    wk = _weights_key()
+    grid, cost_map, report = route_grid(nt, wk)
     s_info = resolve_endpoint("start", start_latlon[0], start_latlon[1], grid,
                               allow_snap, MAX_SNAP_CELLS)
     g_info = resolve_endpoint("goal", goal_latlon[0], goal_latlon[1], grid,
@@ -678,14 +831,16 @@ def reroute_route(original: Any, new_timestep: Any,
     src = (s_info["cell"][0], s_info["cell"][1])
     dst = (g_info["cell"][0], g_info["cell"][1])
 
-    new_plan = plan_route(nt, src[0], src[1], dst[0], dst[1])
+    new_plan = plan_route(nt, src[0], src[1], dst[0], dst[1], wk)
     if not new_plan["success"]:
         raise RouteRequestError(
             f"no route exists between the same endpoints on the D{nt} SIC "
             f"field", "no_route", new_timestep=nt)
 
     new_path: List[List[int]] = new_plan["path"]
-    new_validation = validate_path(grid, new_path, src, dst)
+    new_validation = validate_path(
+        grid, new_path, src, dst,
+        cost_layers=new_plan.get("cost_breakdown", {}).get("layers_in_cost"))
 
     orig_cells = [[int(r), int(c)] for r, c in orig_path]
     both = bool(orig_cells and new_path)
@@ -713,14 +868,34 @@ def reroute_route(original: Any, new_timestep: Any,
             "validation": validation,
         }
 
+    # The original route is supplied by the client, so it is validated here
+    # against the grid of its own timestep before it is echoed back as a
+    # "route". An unvalidated path must never be presented as one.
+    origin_grid = f.load(t_hours=float(origin_step) * 24.0,
+                         grid_template=native_grid())
+    origin_validation = validate_path(
+        origin_grid, orig_cells,
+        (orig_cells[0][0], orig_cells[0][1]),
+        (orig_cells[-1][0], orig_cells[-1][1]),
+        cost_layers=plan_route(
+            origin_step, orig_cells[0][0], orig_cells[0][1],
+            orig_cells[-1][0], orig_cells[-1][1], wk
+        ).get("cost_breakdown", {}).get("layers_in_cost"))
+    origin_sic = np.asarray(origin_grid.sic_mean, dtype=np.float64)[
+        [p[0] for p in orig_cells], [p[1] for p in orig_cells]]
+
     original_block = {
         "timestep": origin_step,
         "date": str(f.dates[origin_step])[:10],
         "waypoints": len(orig_cells),
         "path": orig_cells,
-        "mean_sic": original.get("mean_sic"),
-        "max_sic": original.get("max_sic"),
-        "source": "path supplied by the client (the plan it optimized)",
+        "mean_sic": float(np.nanmean(origin_sic)),
+        "max_sic": float(np.nanmax(origin_sic)),
+        "nan_cells": origin_validation["nan_cells"],
+        "non_navigable_cells": origin_validation["non_navigable_cells"],
+        "validation": origin_validation,
+        "source": "the client's plan, re-validated against the D%d SIC field"
+                  % origin_step,
     }
     updated_block = block(new_plan, new_path, new_validation, s_info, g_info, nt)
 
@@ -752,6 +927,11 @@ def reroute_route(original: Any, new_timestep: Any,
         "updated_route": updated_block,
         "route_comparison": comparison,
         "changed_segments": changed_segments(orig_cells, new_path),
+        "layer_status": new_plan["layer_status"],
+        "cost_breakdown": report["cost_breakdown"],
+        "environmental_grid": report["grid"],
+        "cost_weights": cost_weights().to_dict(),
+        "land_mask": report["land_mask"],
         "metrics": {
             "original": {k: original_block.get(k) for k in
                          ("waypoints", "mean_sic", "max_sic", "route_length")},
@@ -1070,10 +1250,9 @@ def route_profile(t: int, start_row: int, start_col: int,
     is synthesised — if a cell is NaN the sample is reported as null and is
     never filled in.
     """
-    f = field()
-    grid = f.load(t_hours=float(t) * 24.0, grid_template=native_grid())
+    grid, cost_map, _report = route_grid(t, _weights_key())
     result = astar(grid, (start_row, start_col), (goal_row, goal_col),
-                   weights=CostWeights())
+                   weights=cost_weights())
     path = [(int(r), int(c)) for r, c in result.path]
     lat = np.asarray(grid.lat)
     lon = np.asarray(grid.lon)
@@ -1252,7 +1431,9 @@ def create_app() -> Flask:
             int(a.get("start_col", DEFAULT_START[1])),
             int(a.get("goal_row", DEFAULT_GOAL[0])),
             int(a.get("goal_col", DEFAULT_GOAL[1])),
+            _weights_key(),
         )
+
         return jsonify({
             "date": str(field().dates[timestep])[:10],
             "algorithm": "A* + CostMap",
@@ -1349,8 +1530,8 @@ def create_app() -> Flask:
         gr = int(a.get("goal_row", DEFAULT_GOAL[0]))
         gc = int(a.get("goal_col", DEFAULT_GOAL[1]))
 
-        original = plan_route(origin, sr, sc, gr, gc)
-        new = plan_route(timestep, sr, sc, gr, gc)
+        original = plan_route(origin, sr, sc, gr, gc, _weights_key())
+        new = plan_route(timestep, sr, sc, gr, gc, _weights_key())
         orig_cells = [tuple(p) for p in original["path"]]
         new_cells = [tuple(p) for p in new["path"]]
         both = bool(orig_cells and new_cells)
@@ -1404,6 +1585,35 @@ def create_app() -> Flask:
     @app.get("/api/limitations")
     def limitations():
         return jsonify(LIMITATIONS)
+
+    @app.get("/api/layers/status")
+    def layers_status():
+        """
+        Per-layer availability for a given forecast timestep.
+
+        Reports what each environmental layer contributed to the grid the route
+        optimizer consumes, and whether that layer actually reached the cost.
+        A layer is never reported as integrated on the strength of a loader
+        existing: ``in_cost`` is derived from the active cost weights.
+        """
+        t = int(request.args.get("timestep", 0))
+        check_timestep(t)
+        grid, cost_map, report = route_grid(t, _weights_key())
+        return jsonify({
+            "timestep": t,
+            "date": str(field().dates[t])[:10],
+            "environmental_grid": report["grid"],
+            "land_mask": report["land_mask"],
+            "cost_weights": cost_weights().to_dict(),
+            "cost_breakdown": report["cost_breakdown"],
+            **registry_to_dict(
+                report["registry"],
+                cost_layers=report["cost_breakdown"]["layers_in_cost"]),
+            "datasets": data_paths.describe_all(),
+            "data_root_env": data_paths.DATA_ROOT_ENVVAR,
+            "limitations": LIMITATIONS,
+        })
+
 
     # ---------------- system status / data availability ----------------
 

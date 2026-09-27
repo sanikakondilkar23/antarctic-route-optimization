@@ -287,7 +287,22 @@ class TestSystemStatus:
 
     def test_limitations_endpoint(self, client):
         lim = client.get("/api/limitations").get_json()
-        assert set(lim) == {"sic", "cmems", "cvar", "route_ml", "route"}
+        # The five original guarantees must always be stated...
+        for key in ("sic", "cmems", "cvar", "route_ml", "route"):
+            assert key in lim, key
+            assert lim[key].strip(), f"{key} must not be an empty string"
+        # ...and any further layer the deployment can report must also carry a
+        # real explanation rather than being silently absent.
+        for key, text in lim.items():
+            assert isinstance(text, str) and text.strip(), key
+
+    def test_limitations_cover_every_reported_layer(self, client):
+        """A layer the API calls out in layer_status must also be explained in
+        /api/limitations, so nothing is available-but-undocumented."""
+        lim = client.get("/api/limitations").get_json()
+        body = ("\n".join(f"{k}: {v}" for k, v in lim.items())).lower()
+        for name in ("uncertainty", "depth", "wind", "iceberg", "land_mask"):
+            assert name in body, f"{name} is not explained in /api/limitations"
 
 
 # ---------------------------------------------------------------------------

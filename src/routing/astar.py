@@ -111,6 +111,13 @@ def astar(
 
     cost_map = CostMap(grid, weights)
 
+    # A navigable cell whose environmental cost is not finite cannot be costed
+    # (for example an enabled layer is +inf there, i.e. the POLARIS
+    # "impassable" class).  Such a cell is treated as unusable rather than
+    # being relaxed with a NaN score, which would silently end the search.
+    if not math.isfinite(cost_map.env_cost[r_s, c_s]):
+        return RouteResult(False, [], 0.0, 0.0, 0, 0.0)
+
     # Include start-cell environmental cost in g_score
     start_env_cost = cost_map.cell_cost(r_s, c_s)
 
@@ -166,6 +173,8 @@ def astar(
             if not (0 <= nr < grid.n_rows and 0 <= nc < grid.n_cols):
                 continue
             if not grid.navigable[nr, nc]:
+                continue
+            if not math.isfinite(cost_map.env_cost[nr, nc]):
                 continue
 
             tentative_g = g_score[(r_cur, c_cur)] + cost_map.edge_cost(

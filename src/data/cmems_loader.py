@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -89,6 +89,8 @@ def current_speed_from_uv(uo: np.ndarray, vo: np.ndarray) -> np.ndarray:
 def resolve_cmems_path(
     cmems_root: str,
     query_datetime: datetime,
+    *,
+    allow_future_forecast: bool = True,
 ) -> Path:
     """
     Resolve the CMEMS netCDF file path for a given datetime.
@@ -96,10 +98,16 @@ def resolve_cmems_path(
     Parameters
     ----------
     cmems_root : str
-        Root directory of CMEMS data, e.g.
-        "/content/drive/MyDrive/SIH_26_Sanika/dataset/Copernicus_Ocean"
+        Root directory of CMEMS data, e.g. the ``Copernicus_Ocean`` or
+        ``CMEMS_Future_Forecast`` directory of the dataset root.  Resolved via
+        :mod:`src.data.paths`, never hardcoded.
     query_datetime : datetime
         The UTC datetime to find data for.
+    allow_future_forecast : bool
+        When the year is outside the reanalysis range, also accept a forecast
+        file.  The committed SIC forecast period is 2026, which no CMEMS
+        reanalysis covers, so a future-forecast product is the only legitimate
+        source for those dates.
 
     Returns
     -------
@@ -110,31 +118,37 @@ def resolve_cmems_path(
     ------
     FileNotFoundError
         If no file exists for the given datetime.
-    ValueError
-        If the year is outside the supported range (2021-2025).
     """
     year = query_datetime.year
     month = query_datetime.month
     root = Path(cmems_root)
 
-    if year < 2021 or year > 2025:
-        raise ValueError(
-            f"Year {year} outside supported range 2021-2025. "
-            f"CMEMS data is only available for 2021-2025."
-        )
+    candidates: List[Path] = []
 
-    if year == 2025:
-        path = root / "2025" / "CMEMS_Current_2025_6hourly.nc"
-    else:
-        path = root / str(year) / f"Ocean_{year}_{month:02d}.nc"
+    if 2021 <= year <= 2024:
+        candidates.append(root / str(year) / f"Ocean_{year}_{month:02d}.nc")
+    elif year == 2025:
+        candidates.append(root / "2025" / "CMEMS_Current_2025_6hourly.nc")
+        candidates.append(root / str(year) / f"Ocean_{year}_{month:02d}.nc")
 
-    if not path.exists():
-        raise FileNotFoundError(
-            f"CMEMS file not found: {path} "
-            f"(requested datetime: {query_datetime.isoformat()})"
-        )
+    if allow_future_forecast:
+        candidates.extend([
+            root / str(year) / f"Ocean_{year}_{month:02d}.nc",
+            root / str(year) / f"CMEMS_Current_{year}_6hourly.nc",
+            root / f"CMEMS_Current_{year}_6hourly.nc",
+            root / str(year) / f"ocean_{year}_{month:02d}.nc",
+        ])
 
-    return path
+    for path in candidates:
+        if path.exists():
+            return path
+
+    searched = "\n  ".join(str(c) for c in dict.fromkeys(candidates))
+    raise FileNotFoundError(
+        f"CMEMS file not found for {query_datetime.isoformat()}.\n"
+        f"  searched:\n  {searched}\n"
+        f"  root: {root}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -255,14 +269,27 @@ class CMEMSDateAwareLoader:
             sel_kwargs = {}
             if lat_bounds is not None:
                 lat_min, lat_max = lat_bounds
-                # CMEMS latitude is typically descending (-80 to -50)
-                # Use slice(min, max) which works for both ascending and descending
-                sel_kwargs[self.lat_var] = slice(
-                    min(lat_min, lat_max), max(lat_min, lat_max)
-                )
+                # CMEMS latitude may be ascending or descending; a label-based
+                # slice requires the axis order to be known, so read it first
+                # and slice in the axis's own direction.
+                lat_axis = ds[self.lat_var]
+                if lat_axis.size and lat_axis.values[0] > lat_axis.values[-1]:
+                    sel_kwargs[self.lat_var] = slice(
+                        max(lat_min, lat_max), min(lat_min, lat_max)
+                    )
+                else:
+                    sel_kwargs[self.lat_var] = slice(
+                        min(lat_min, lat_max), max(lat_min, lat_max)
+                    )
             if lon_bounds is not None:
                 lon_min, lon_max = lon_bounds
-                sel_kwargs[self.lon_var] = slice(lon_min, lon_max)
+                lon_axis = ds[self.lon_var]
+                if lon_axis.size and lon_axis.values[0] > lon_axis.values[-1]:
+                    sel_kwargs[self.lon_var] = slice(
+                        max(lon_min, lon_max), min(lon_min, lon_max)
+                    )
+                else:
+                    sel_kwargs[self.lon_var] = slice(lon_min, lon_max)
 
             if sel_kwargs:
                 ds = ds.sel(**sel_kwargs)
@@ -277,12 +304,11 @@ class CMEMSDateAwareLoader:
                 ds_t = ds_t.isel({self.depth_var: 0})
 
             # --- Read uo/vo into memory (only the subset + timestep) ---
+            # NaN is preserved: a cell with no current measurement must not be
+            # reported as zero current.  The cost map omits the current term
+            # for such cells and records how many were omitted.
             uo = ds_t[self.uo_var].values.astype(np.float64)
             vo = ds_t[self.vo_var].values.astype(np.float64)
-
-            # Fill NaN with 0 (missing current = no current)
-            uo = np.nan_to_num(uo, nan=0.0)
-            vo = np.nan_to_num(vo, nan=0.0)
 
             lat = ds[self.lat_var].values
             lon = ds[self.lon_var].values
