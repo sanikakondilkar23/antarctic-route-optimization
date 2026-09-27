@@ -145,8 +145,29 @@ STATUS_STATIC = "STATIC"
 STATUS_IRREGULAR = "IRREGULAR"
 STATUS_READY = "READY_FOR_INTEGRATION"
 STATUS_BLOCKED = "BLOCKED"
+#: A file was found and identified, but this environment has no reader for its
+#: format. This is an honest statement about the AUDIT, never about the data:
+#: the file is not assumed to be complete, empty or invalid.
+STATUS_NOT_READABLE = "NOT_READABLE_WITH_CURRENT_ENVIRONMENT"
 
 NETCDF_EXT = {".nc", ".nc4", ".cdf"}
+
+#: Which authentication each dataset needs from an official source. Used by the
+#: download script to report AUTH_REQUIRED instead of guessing.
+AUTH_REQUIREMENT = {
+    "SIC": "earthdata login (NASA NSIDC)",
+    "OSI_SAF": "none (open)",
+    "AMSR2": "none / JAXA registration",
+    "Copernicus_Ocean": "Copernicus Marine account",
+    "CMEMS_PHY": "Copernicus Marine account",
+    "CMEMS_Future_Forecast": "Copernicus Marine account",
+    "ERA5": "CDS API key (~/.cdsapirc)",
+    "ECMWF_ENS": "ECMWF / CDS credentials",
+    "ICEBERGS": "varies by national ice service",
+    "GEBCO": "none (open)",
+    "AIS": "provider-dependent",
+    "Vessel": "none (project metadata)",
+}
 
 
 # --------------------------------------------------------------------------
@@ -236,6 +257,8 @@ def _time_info(ds) -> Dict[str, Any]:
 
 def xarray_time(v):
     import xarray as xr
+    if np.issubdtype(np.asarray(v.values).dtype, np.datetime64):
+        return v
     try:
         return xr.decode_cf(v)
     except Exception:
@@ -251,32 +274,31 @@ def pd_index(vals: np.ndarray) -> Tuple[str, str, str, str]:
     if idx.size < 2:
         return earliest, latest, "single timestamp", "irregular"
     deltas = np.diff(idx.values).astype("timedelta64[s]").astype(np.int64)
+    deltas = deltas[deltas > 0]
+    if deltas.size == 0:
+        return earliest, latest, "single distinct timestamp", "irregular"
     med = int(np.median(deltas))
     uniq = sorted(set(deltas.tolist()))
-    if len(uniq) <= 2:
-        freq = "irregular" if len(uniq) > 1 and med == 0 else f"{med}s"
-    elif med == 86400:
-        freq = "daily"
-    elif med == 21600:
-        freq = "6-hourly"
-    elif med == 3600:
-        freq = "hourly"
-    else:
-        freq = f"{med}s median"
-    gaps = int((np.array(uniq) > med * 1.5).sum())
-    res = "unknown"
-    if med == 86400:
-        res = "1 day"
-    elif med == 21600:
-        res = "6 hours"
-    elif med == 3600:
-        res = "1 hour"
-    elif med > 0:
-        res = f"{med} s"
-    note = f"{freq}"
-    if gaps:
-        note += f" ({gaps} distinct larger gaps present)"
-    return earliest, latest, res, note
+
+    # Named cadences FIRST: a perfectly regular daily series has exactly one
+    # distinct delta, so any "few distinct values" shortcut would mislabel it.
+    named = {86400: ("1 day", "daily"),
+             43200: ("12 hours", "12-hourly"),
+             21600: ("6 hours", "6-hourly"),
+             10800: ("3 hours", "3-hourly"),
+             3600: ("1 hour", "hourly"),
+             1800: ("30 minutes", "30-minutely"),
+             900: ("15 minutes", "15-minutely")}
+    if med in named and len(uniq) == 1:
+        res, freq = named[med]
+        return earliest, latest, res, freq
+
+    note = f"{med}s median"
+    if len(uniq) > 1:
+        note += f"; {len(uniq)} distinct intervals -> irregular"
+    if len(uniq) == 1:
+        note += "; regular"
+    return earliest, latest, f"{med}s", note
 
 
 def covers_target(lat: Tuple[float, float], lon: Tuple[float, float]) -> Dict[str, Any]:
@@ -296,9 +318,19 @@ def inspect_netcdf(path: Path) -> Dict[str, Any]:
     import xarray as xr
     out: Dict[str, Any] = {"file": str(path), "format": "netcdf", "readable": False}
     try:
-        ds = xr.open_dataset(path, decode_times=False, mask_and_scale=False)
+        # Decode times: this pass only reads metadata (coords, shapes), and a
+        # readable calendar is exactly what the coverage report needs.
+        ds = xr.open_dataset(path, decode_times=True, mask_and_scale=False)
     except Exception as exc:
         out["error"] = f"{type(exc).__name__}: {exc}"
+        # The extension may lie (a .nc4 that is really HDF5, say). Report the
+        # format the CONTENT indicates and do not claim a netCDF was read.
+        actual = identify_format(path)
+        if actual != "netcdf":
+            out["format"] = actual
+            out["status"] = STATUS_NOT_READABLE
+            out["note"] = (f"extension suggested netCDF but the content is "
+                           f"{actual}; not read in this environment")
         return out
     try:
         out["readable"] = True
@@ -334,18 +366,155 @@ def inspect_netcdf(path: Path) -> Dict[str, Any]:
     return out
 
 
-def inspect_generic(path: Path) -> Dict[str, Any]:
+def identify_format(path: Path) -> str:
+    """
+    Format from the file CONTENT first, extension second.
+
+    Content wins because extensions lie: a ``.nc4`` file is frequently plain
+    HDF5, and reporting it as netCDF would imply we read it when we did not.
+    """
+    try:
+        with open(path, "rb") as fh:
+            magic = fh.read(8)
+        if magic[:4] == b"GRIB":
+            return "grib"
+        if magic[:3] == b"CDF":
+            return "netcdf"
+        if magic[:4] == b"\x89HDF":
+            return "hdf5"
+        if magic[:2] == b"PK":
+            return "zip_container"
+        if magic[:5] == b"{\n  " or magic[:1] in (b"{", b"["):
+            return "json"
+        if magic[:2] == b"\x93NUM":
+            return "numpy"
+    except Exception:
+        pass
     ext = path.suffix.lower()
-    kind = {".csv": "csv", ".json": "json", ".txt": "text", ".parquet": "parquet",
-            ".nc": "netcdf", ".zarr": "zarr", ".h5": "hdf5", ".hdf5": "hdf5",
-            ".grib": "grib", ".grib2": "grib", ".grb": "grib"}.get(ext, ext.lstrip(".") or "binary")
-    return {"file": str(path), "format": kind, "readable": None,
-            "note": "binary/opaque format; metadata read from filename only"}
+    known = {
+        ".nc": "netcdf", ".nc4": "netcdf", ".cdf": "netcdf",
+        ".grib": "grib", ".grib2": "grib", ".grb": "grib", ".grb2": "grib",
+        ".h5": "hdf5", ".hdf5": "hdf5", ".hdf": "hdf5",
+        ".zarr": "zarr", ".tif": "geotiff", ".tiff": "geotiff",
+        ".csv": "csv", ".parquet": "parquet", ".json": "json",
+        ".npy": "numpy", ".npz": "numpy", ".txt": "text", ".log": "text",
+    }
+    return known.get(ext, ext.lstrip(".") or "unknown")
+
+
+def inspect_generic(path: Path) -> Dict[str, Any]:
+    """
+    Identify the format and read only what this environment can genuinely read.
+
+    The available stack is numpy / xarray / netCDF4 / pandas / pyarrow / PIL.
+    Anything needing cfgrib, h5py, zarr or rasterio is reported as
+    ``NOT_READABLE_WITH_CURRENT_ENVIRONMENT`` together with its size and path.
+    No metadata is ever invented for an unreadable file.
+    """
+    fmt = identify_format(path)
+    out: Dict[str, Any] = {"file": str(path), "format": fmt}
+
+    if fmt == "numpy":
+        try:
+            arr = np.load(path, mmap_mode="r", allow_pickle=False)
+            out.update(readable=True, reader="numpy",
+                       shape=list(getattr(arr, "shape", [])),
+                       dtype=str(getattr(arr, "dtype", "")),
+                       kind="array")
+            if arr.dtype.kind == "f":
+                a = np.asarray(arr)
+                fin = np.isfinite(a)
+                out["finite_cells"] = int(fin.sum())
+                out["nan_cells"] = int(a.size - fin.sum())
+            if arr.ndim >= 2:
+                out["spatial_dims"] = [int(arr.shape[-2]), int(arr.shape[-1])]
+            return out
+        except Exception as exc:
+            out.update(readable=False, reader="numpy",
+                       status=STATUS_NOT_READABLE, error=f"{type(exc).__name__}")
+            return out
+
+    if fmt in ("csv", "parquet"):
+        try:
+            import pandas as pd
+            df = pd.read_parquet(path) if fmt == "parquet" else pd.read_csv(path, nrows=200000)
+            out.update(readable=True, reader="pandas", rows=int(len(df)),
+                       columns=[str(c) for c in df.columns][:64])
+            return out
+        except Exception as exc:
+            out.update(readable=False, reader="pandas",
+                       status=STATUS_NOT_READABLE, error=f"{type(exc).__name__}")
+            return out
+
+    if fmt == "json":
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            out.update(readable=True, reader="json",
+                       keys=sorted(data)[:32] if isinstance(data, dict) else None,
+                       top_level_type=type(data).__name__)
+            return out
+        except Exception as exc:
+            out.update(readable=False, reader="json",
+                       status=STATUS_NOT_READABLE, error=f"{type(exc).__name__}")
+            return out
+
+    # grib / hdf5 / zarr / geotiff / anything else
+    out.update(readable=False, reader=None, status=STATUS_NOT_READABLE,
+               note=(f"{fmt} file present; this environment has no reader for it. "
+                     f"Install the matching library in Colab "
+                     f"(cfgrib+eccodes / h5py / zarr / rasterio) to audit it. "
+                     f"Its presence and size are recorded; its contents are NOT "
+                     f"assumed."))
+    return out
+
+
+MONTH_RE = None
+
+
+def _month_patterns():
+    global MONTH_RE
+    if MONTH_RE is None:
+        import re
+        MONTH_RE = re.compile(r"(19|20)(\d{2})[-_]?(0[1-9]|1[0-2])")
+    return MONTH_RE
+
+
+def missing_months(periods: List[Tuple[int, int]], start: str, end: str) -> List[str]:
+    """Missing (year, month) pairs inside the target period."""
+    import re
+    have = {(y, m) for y, m in periods}
+    m0 = re.match(r"(\d{4})-(\d{2})", start or "")
+    m1 = re.match(r"(\d{4})-(\d{2})", end or "")
+    if not (m0 and m1 and have):
+        return []
+    y, mo = int(m0.group(1)), int(m0.group(2))
+    ey, emo = int(m1.group(1)), int(m1.group(2))
+    out: List[str] = []
+    while (y, mo) <= (ey, emo):
+        if (y, mo) not in have:
+            out.append(f"{y:04d}-{mo:02d}")
+        mo += 1
+        if mo == 13:
+            y, mo = y + 1, 1
+    return out
+
+
+def periods_from_names(paths: List[Path]) -> List[Tuple[int, int]]:
+    rx = _month_patterns()
+    found: List[Tuple[int, int]] = []
+    for p in paths:
+        m = rx.search(p.stem)
+        if m:
+            found.append((int(m.group(1) + m.group(2)), int(m.group(3))))
+    return sorted(set(found))
 
 
 def inspect_file(path: Path) -> Dict[str, Any]:
-    if path.suffix.lower() in NETCDF_EXT:
-        return inspect_netcdf(path)
+    if path.suffix.lower() in NETCDF_EXT or identify_format(path) == "netcdf":
+        info = inspect_netcdf(path)
+        if not info.get("readable"):
+            info.setdefault("status", STATUS_NOT_READABLE)
+        return info
     return inspect_generic(path)
 
 
@@ -366,6 +535,18 @@ def audit_dataset(name: str, spec: Dict[str, Any], root: Optional[Path],
         "files": [],
         "total_size": 0,
         "notes": [],
+        # --- fields required by the coverage-report specification ---
+        "file_count": 0,
+        "coverage_start": None,
+        "coverage_end": None,
+        "temporal_frequency": None,
+        "native_format": None,
+        "full_target_region": False,
+        "missing_periods": None,
+        "missing_spatial_regions": None,
+        "authentication_required": AUTH_REQUIREMENT.get(name, "unknown"),
+        "downloaded_now": False,
+        "sha256_verified": do_hash and False,
     }
     if spec.get("must_preserve_vectors"):
         entry["must_preserve_vectors"] = spec["must_preserve_vectors"]
@@ -397,18 +578,22 @@ def audit_dataset(name: str, spec: Dict[str, Any], root: Optional[Path],
             entry["files"].append(info)
 
     entry["inspected"] = len(manifest)
+    unreadable = [m for m in manifest if m.get("status") == STATUS_NOT_READABLE]
 
     # ---- coverage aggregation from the files actually read -------------
     readable = [m for m in manifest if m.get("readable")]
-    if readable:
-        lat_min = min(m["lat"][0] for m in readable if "lat" in m)
-        lat_max = max(m["lat"][1] for m in readable if "lat" in m)
-        lon_min = min(m["lon"][0] for m in readable if "lon" in m)
-        lon_max = max(m["lon"][1] for m in readable if "lon" in m)
+    with_coords = [m for m in readable if "lat" in m and "lon" in m]
+    if with_coords:
+        lat_min = min(m["lat"][0] for m in with_coords)
+        lat_max = max(m["lat"][1] for m in with_coords)
+        lon_min = min(m["lon"][0] for m in with_coords)
+        lon_max = max(m["lon"][1] for m in with_coords)
         entry["lat_min"], entry["lat_max"] = lat_min, lat_max
         entry["lon_min"], entry["lon_max"] = lon_min, lon_max
         entry.update(covers_target((lat_min, lat_max), (lon_min, lon_max)))
-        times = [m["time"] for m in readable if m.get("time", {}).get("readable")]
+        entry["full_target_region"] = bool(entry.get("full_target_coverage"))
+        entry["n_files_with_coordinates"] = len(with_coords)
+        times = [m["time"] for m in with_coords if m.get("time", {}).get("readable")]
         if times:
             entry["coverage_start"] = min(t["earliest"] for t in times)
             entry["coverage_end"] = max(t["latest"] for t in times)
@@ -417,12 +602,53 @@ def audit_dataset(name: str, spec: Dict[str, Any], root: Optional[Path],
             res = sorted({t["native_resolution"] for t in times})
             entry["temporal_resolution"] = "; ".join(res)
             entry["n_timestamps_max"] = max(t["n_timestamps"] for t in times)
+        else:
+            entry["temporal_frequency"] = "STATIC (no time coordinate)"
         entry["native_format"] = "; ".join(sorted({m["format"] for m in manifest}))
     else:
         entry["native_format"] = "; ".join(sorted({m["format"] for m in manifest}))
+        entry["temporal_frequency"] = "UNKNOWN (no file with readable coordinates)"
         entry["notes"].append(
-            "no file could be opened for metadata; coverage NOT measured — "
-            "a present directory is not evidence of coverage")
+            f"{len(readable)} file(s) opened, but none exposed a "
+            f"latitude/longitude coordinate; spatial coverage NOT measured")
+    if readable and not with_coords and spec["kind"] == "gridded":
+        entry["notes"].append(
+            "this dataset is expected to be gridded but no coordinate was found; "
+            "it is NOT assumed to cover the routing domain")
+
+    if unreadable:
+        entry["n_files_not_readable"] = len(unreadable)
+        entry["notes"].append(
+            f"{len(unreadable)} file(s) are {STATUS_NOT_READABLE}; their size "
+            f"and format are recorded but their contents are NOT assumed")
+
+    # ---- which months of the target period are absent -------------------
+    periods = periods_from_names(paths)
+    if periods:
+        entry["periods_detected"] = len(periods)
+        entry["missing_periods"] = missing_months(periods, TARGET_PERIOD[0],
+                                                 TARGET_PERIOD[1])
+        if not entry["missing_periods"] and entry["coverage_start"] is None:
+            entry["coverage_start"] = f"{periods[0][0]:04d}-{periods[0][1]:02d}"
+            entry["coverage_end"] = f"{periods[-1][0]:04d}-{periods[-1][1]:02d}"
+
+    # ---- spatial shortfall, stated concretely ---------------------------
+    if entry.get("lat_min") is not None and not np.isnan(entry["lat_min"]):
+        short: List[str] = []
+        if entry["lat_min"] > TARGET_LAT[0]:
+            short.append(f"lat {TARGET_LAT[0]}..{entry['lat_min']:.2f} missing "
+                         f"(data starts at {entry['lat_min']:.2f})")
+        if entry["lat_max"] < TARGET_LAT[1]:
+            short.append(f"lat {entry['lat_max']:.2f}..{TARGET_LAT[1]} missing "
+                         f"(data ends at {entry['lat_max']:.2f})")
+        if entry["lon_min"] > TARGET_LON[0]:
+            short.append(f"lon {TARGET_LON[0]}..{entry['lon_min']:.2f} missing")
+        if entry["lon_max"] < TARGET_LON[1]:
+            short.append(f"lon {entry['lon_max']:.2f}..{TARGET_LON[1]} missing")
+        entry["missing_spatial_regions"] = short or None
+
+    entry["sha256_verified"] = bool(do_hash and manifest
+                                    and all("sha256" in m for m in manifest))
 
     # ---- status --------------------------------------------------------
     if not entry["files"]:
@@ -517,6 +743,8 @@ def main() -> int:
     ap.add_argument("--no-hash", action="store_true", help="skip SHA-256 (faster)")
     ap.add_argument("--max-files", type=int, default=40,
                     help="max file records to embed per dataset (all are manifested)")
+    ap.add_argument("--out", help="directory to write dataset_audit.json into")
+    ap.add_argument("--manifest-dir", help="directory to write per-dataset manifests into")
     args = ap.parse_args()
 
     root, how = resolve_root(args.root)
@@ -547,11 +775,21 @@ def main() -> int:
         if e.get("lat_min") is not None and not np.isnan(e["lat_min"]):
             cov = (f"lat {e['lat_min']:.2f}..{e['lat_max']:.2f}  "
                    f"lon {e['lon_min']:.2f}..{e['lon_max']:.2f}"
-                   f"{'  [FULL]' if e.get('full_target_coverage') else '  [PARTIAL]'}")
+                   f"{'  [FULL]' if e.get('full_target_region') else '  [PARTIAL]'}")
         elif e["status"] in (STATUS_NOT_AVAILABLE, STATUS_BLOCKED):
             cov = e["notes"][0] if e["notes"] else ""
+        n_files = e.get("file_count", 0)
+        extra = f" (+{e['n_files_not_readable']} unreadable)" if e.get("n_files_not_readable") else ""
         print(f"{e['dataset']:24s} {e['status']:18s} "
-              f"{e.get('file_count', 0):>7d}  {cov}")
+              f"{n_files:>7d}{extra}  {cov}")
+    print()
+    print("TARGET-PERIOD COMPLETENESS (2021-01 .. 2025-12)")
+    for e in datasets:
+        mp = e.get("missing_periods")
+        if e.get("periods_detected"):
+            print(f"  {e['dataset']:24s} {e['periods_detected']:>3d} month(s) detected, "
+                  f"{len(mp or [])} missing"
+                  + (f"  e.g. {', '.join(mp[:6])}" if mp else "  (complete)"))
     print()
 
     committed = audit_committed()
@@ -577,12 +815,14 @@ def main() -> int:
     print("  * = protected artifact (must remain byte-identical)")
 
     # ---- write outputs -------------------------------------------------
-    DATASET_DIR.mkdir(parents=True, exist_ok=True)
-    MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out) if args.out else DATASET_DIR / "audit"
+    man_dir = Path(args.manifest_dir) if args.manifest_dir else DATASET_DIR / "manifests"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    man_dir.mkdir(parents=True, exist_ok=True)
     for e in datasets:
         man = e.pop("_manifest", [])
         if man:
-            (MANIFEST_DIR / f"{e['dataset']}.manifest.json").write_text(
+            (man_dir / f"{e['dataset']}.manifest.json").write_text(
                 json.dumps({
                     "dataset": e["dataset"],
                     "provider": e["provider"],
@@ -620,11 +860,10 @@ def main() -> int:
             "route_artifacts_modified": False,
         },
     }
-    OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    OUT_JSON.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(f"\nwrote {OUT_JSON.relative_to(ROOT)}")
-    print(f"wrote {len(list(MANIFEST_DIR.glob('*.manifest.json')))} manifest file(s) "
-          f"to {MANIFEST_DIR.relative_to(ROOT)}/")
+    out_json = out_dir / "dataset_audit.json"
+    out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"\nwrote {out_json}")
+    print(f"wrote {len(list(man_dir.glob('*.manifest.json')))} manifest file(s) to {man_dir}")
     return 0
 
 

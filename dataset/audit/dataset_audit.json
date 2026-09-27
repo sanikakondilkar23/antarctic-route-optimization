@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-09-27T12:58:32.094259+00:00",
+  "generated_utc": "2026-09-27T14:50:09.839115+00:00",
   "project": "SIH2026059",
   "system": "IceRoute-Robust",
   "host": {
@@ -36,7 +36,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "earthdata login (NASA NSIDC)",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "OSI_SAF",
@@ -51,7 +62,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "none (open)",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "AMSR2",
@@ -66,7 +88,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "none / JAXA registration",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "Copernicus_Ocean",
@@ -82,6 +115,17 @@
       "notes": [
         "dataset root not resolvable in this environment; not audited"
       ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "Copernicus Marine account",
+      "downloaded_now": false,
+      "sha256_verified": false,
       "must_preserve_vectors": [
         "uo",
         "vo"
@@ -101,6 +145,17 @@
       "notes": [
         "dataset root not resolvable in this environment; not audited"
       ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "Copernicus Marine account",
+      "downloaded_now": false,
+      "sha256_verified": false,
       "must_preserve_vectors": [
         "uo",
         "vo"
@@ -120,6 +175,17 @@
       "notes": [
         "dataset root not resolvable in this environment; not audited"
       ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "Copernicus Marine account",
+      "downloaded_now": false,
+      "sha256_verified": false,
       "must_preserve_vectors": [
         "uo",
         "vo"
@@ -138,7 +204,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "CDS API key (~/.cdsapirc)",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "ECMWF_ENS",
@@ -153,7 +230,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "ECMWF / CDS credentials",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "ICEBERGS",
@@ -168,7 +256,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "varies by national ice service",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "GEBCO",
@@ -183,7 +282,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "none (open)",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "AIS",
@@ -198,7 +308,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "provider-dependent",
+      "downloaded_now": false,
+      "sha256_verified": false
     },
     {
       "dataset": "Vessel",
@@ -213,7 +334,18 @@
       "total_size": 0,
       "notes": [
         "dataset root not resolvable in this environment; not audited"
-      ]
+      ],
+      "file_count": 0,
+      "coverage_start": null,
+      "coverage_end": null,
+      "temporal_frequency": null,
+      "native_format": null,
+      "full_target_region": false,
+      "missing_periods": null,
+      "missing_spatial_regions": null,
+      "authentication_required": "none (project metadata)",
+      "downloaded_now": false,
+      "sha256_verified": false
     }
   ],
   "committed_artifacts": {
