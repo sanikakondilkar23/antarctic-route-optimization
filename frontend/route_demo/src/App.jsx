@@ -1,142 +1,102 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  fetchMetadata, fetchSystemStatus, fetchLimitations, fetchRoute, fetchRouteAt,
-  fetchRerouteDemo, fetchSlice, cachedSlice, fetchRouteProfile,
-  fetchUncertainty, cachedUncertainty, fetchUncertaintySummary, fetchEnsemble,
-  fetchCurrent, buildDiff,
-  REROUTE_ORIGIN_STEP, REROUTE_TARGET_STEP,
+  fetchMetadata, fetchSystemStatus, fetchLimitations, fetchSlice, cachedSlice,
+  fetchUncertainty, cachedUncertainty, fetchCurrent, buildDiff,
+  optimizeRoute, rerouteRoute,
 } from './api.js'
 import SicMap from './components/SicMap.jsx'
-import FinalScreen from './components/FinalScreen.jsx'
 import Timeline from './components/Timeline.jsx'
-import { STAGES, STAGE_CARD } from './components/StageList.jsx'
 import Header from './components/Header.jsx'
-import LeftSidebar from './components/LeftSidebar.jsx'
-import IntelRail from './components/IntelRail.jsx'
-
-const ORIGIN_STEP = REROUTE_ORIGIN_STEP // D0 — the leg is planned here
-const TARGET_STEP = REROUTE_TARGET_STEP // D3 — verified real reroute endpoint
-
-const DEFAULT_LAYERS = {
-  sic: true,
-  nonNav: true,
-  route: true,
-  vessel: true,
-  uncertainty: false,
-  current: false,
-  risk: false,
-  rerouteDiff: false,
-}
+import './planner.css'
 
 /**
- * Minimum perceivable busy window (ms).
+ * IceRoute-Robust — route-optimization planner.
  *
- * The backend caches A* plans, so a repeat click can resolve in a few
- * milliseconds. Without a floor the loading state and the map highlight
- * would never paint and the button would look like it did nothing. The
- * request is real either way — this only guarantees the transition is
- * actually visible on stage.
+ *   INPUT (start, goal, forecast day)
+ *     -> REAL SIC field + navigability constraints   (GET  /api/sic/<t>)
+ *     -> A* + CostMap environmental cost map         (POST /api/route/optimize)
+ *     -> OPTIMIZED ROUTE
+ *     -> metrics + hard safety validation           (same response)
+ *     -> DYNAMIC REROUTE on a later forecast day     (POST /api/route/reroute)
+ *
+ * The chart is drawn from the API's base64 SIC raster — there is no image
+ * frame dependency of any kind. Every number on screen comes from a backend
+ * response; this component computes no science.
  */
-const MIN_BUSY_MS = { route: 1100, reroute: 1800 }
 
-const holdBusyWindow = async (t0, min) => {
-  const left = min - (performance.now() - t0)
-  if (left > 0) await new Promise((resolve) => setTimeout(resolve, left))
+/** The verified real-data baseline: the leg used to validate the backend. */
+const BASELINE = {
+  start: { lat: -32.0, lon: 82.0 },
+  goal: { lat: -70.0, lon: 10.5 },
+  timestep: 0,
 }
+
+const PRESETS = [
+  { name: 'Cape Town → Maitri', ...BASELINE },
+  { name: 'Cape Town → Bharati', start: { lat: -32.0, lon: 82.0 }, goal: { lat: -69.41, lon: 76.19 }, timestep: 0 },
+  { name: 'Cape Town → Maitri (mid-season)', start: { lat: -34.0, lon: 18.5 }, goal: { lat: -70.0, lon: 10.5 }, timestep: 100 },
+  { name: 'Prydz Bay → Maitri', start: { lat: -68.0, lon: 75.0 }, goal: { lat: -70.0, lon: 10.5 }, timestep: 140 },
+]
+
+const fmt = (v, d = 4) =>
+  v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d)
+const fmtInt = (v) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toLocaleString())
+const dms = (v, pos, neg) =>
+  v == null || Number.isNaN(Number(v)) ? '—' : `${Math.abs(Number(v)).toFixed(2)}°${Number(v) < 0 ? neg : pos}`
 
 export default function App() {
   const [meta, setMeta] = useState(null)
   const [status, setStatus] = useState(null)
   const [limitations, setLimitations] = useState(null)
-  const [ensemble, setEnsemble] = useState(null)
-  const [uncSummary, setUncSummary] = useState(null)
   const [cmems, setCmems] = useState(null)
-  const [route, setRoute] = useState(null)     // verified artifact (final_route.json)
-  const [plan, setPlan] = useState(null)       // A* plan with SIC metrics, from /api/route/at
-  const [profile, setProfile] = useState(null) // real SIC along the route
-  const [reroute, setReroute] = useState(null) // real /api/reroute/3 result
-  const [afterSlice, setAfterSlice] = useState(null)
-  const [timestep, setTimestep] = useState(ORIGIN_STEP)
+  const [fatal, setFatal] = useState(null)
+
+  const [start, setStart] = useState(BASELINE.start)
+  const [goal, setGoal] = useState(BASELINE.goal)
+  const [timestep, setTimestep] = useState(BASELINE.timestep)
+  const [rrTarget, setRrTarget] = useState(null) // null = follow the timeline
+
   const [slice, setSlice] = useState(null)
-  const [horizon, setHorizon] = useState(0)
   const [uncertainty, setUncertainty] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState({ slice: false, route: false, reroute: false, profile: false, unc: false })
-  const [error, setError] = useState(null)
-  const [stage, setStage] = useState('intro')
+  const [showUncertainty, setShowUncertainty] = useState(false)
+
+  const [plan, setPlan] = useState(null) // POST /api/route/optimize response
+  const [rr, setRr] = useState(null) // POST /api/route/reroute response
+  const [rrBefore, setRrBefore] = useState(null) // SIC frame the reroute started from
+  const [afterSlice, setAfterSlice] = useState(null)
+
+  const [busy, setBusy] = useState({ slice: false, optimize: false, reroute: false })
+  const [notice, setNotice] = useState(null) // {tone, text}
+  const [pickMode, setPickMode] = useState(null) // 'start' | 'goal' | null
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(160)
-  const [layers, setLayers] = useState(DEFAULT_LAYERS)
-  const [renderMode, setRenderMode] = useState('sic')
-  const [sideBySide, setSideBySide] = useState(false)
-  const [routeVisible, setRouteVisible] = useState(false)
-  const [pulseT, setPulseT] = useState(null)
   const [vesselT, setVesselT] = useState(null)
-  const [vesselPark, setVesselPark] = useState(0)
-  const [flashKey, setFlashKey] = useState(0)
-  const [planResult, setPlanResult] = useState(null)
-  const [rrResult, setRrResult] = useState(null)
-  const [focus, setFocus] = useState('env')
-  const [leftOpen, setLeftOpen] = useState(false)
-  const [rightOpen, setRightOpen] = useState(false)
 
-  const pulseRef = useRef(null)
-  const vesselRef = useRef(null)
-  const playRef = useRef(null)
+  const sweepRef = useRef(null)
 
   /* ------------------------------------------------------------------ */
-  /* The window itself must never scroll.                                */
-  /* ------------------------------------------------------------------ */
-  useEffect(() => {
-    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
-    const pin = () => { if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0) }
-    window.addEventListener('scroll', pin, { passive: true })
-    pin()
-    return () => window.removeEventListener('scroll', pin)
-  }, [])
-
-  /* ------------------------------------------------------------------ */
-  /* Bootstrap: metadata + status + verified route + A* plan metrics      */
+  /* Bootstrap                                                            */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
     let alive = true
     ;(async () => {
       try {
-        const [m, s, r, lim, ens, usum, cur] = await Promise.all([
-          fetchMetadata(), fetchSystemStatus(), fetchRoute(), fetchLimitations(),
-          fetchEnsemble(), fetchUncertaintySummary(), fetchCurrent(ORIGIN_STEP),
+        const [m, s, lim, cur] = await Promise.all([
+          fetchMetadata(), fetchSystemStatus(), fetchLimitations(), fetchCurrent(0),
         ])
         if (!alive) return
         setMeta(m)
         setStatus(s)
         setLimitations(lim)
-        setEnsemble(ens)
-        setUncSummary(usum)
         setCmems(cur)
-        if (r) {
-          setRoute(r)
-          // /api/route carries no SIC-along-route stats, so ask the backend
-          // router for the D0 plan to populate the route metrics panel.
-          try {
-            const p = await fetchRouteAt(ORIGIN_STEP)
-            if (alive) setPlan(p)
-          } catch (e) {
-            if (alive) setPlan(r)
-          }
-        }
       } catch (e) {
-        if (!alive) return
-        setError(e.message)
-      } finally {
-        if (alive) setLoading(false)
+        if (alive) setFatal(e.message)
       }
     })()
     return () => { alive = false }
   }, [])
 
-  /* ------------------------------------------------------------------ */
-  /* Lazy per-timestep SIC slice                                          */
-  /* ------------------------------------------------------------------ */
+  /* Real SIC raster for the selected day. Cached per timestep. */
   useEffect(() => {
     let alive = true
     const cached = cachedSlice(timestep)
@@ -144,584 +104,596 @@ export default function App() {
     setBusy((b) => ({ ...b, slice: true }))
     fetchSlice(timestep)
       .then((s) => { if (alive) setSlice(s) })
-      .catch((e) => { if (alive) setError(e.message) })
+      .catch((e) => { if (alive) setNotice({ tone: 'bad', text: e.message }) })
       .finally(() => { if (alive) setBusy((b) => ({ ...b, slice: false })) })
     return () => { alive = false }
   }, [timestep])
 
-  /* ------------------------------------------------------------------ */
-  /* Lazy per-timestep route profile (real SIC along the real route)       */
-  /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!layers.risk) return undefined
-    let alive = true
-    setBusy((b) => ({ ...b, profile: true }))
-    fetchRouteProfile(timestep)
-      .then((p) => { if (alive) setProfile(p) })
-      .catch(() => { if (alive) setProfile(null) })
-      .finally(() => { if (alive) setBusy((b) => ({ ...b, profile: false })) })
-    return () => { alive = false }
-  }, [timestep, layers.risk])
-
-  /* ------------------------------------------------------------------ */
-  /* Lazy uncertainty frame (artifact-backed, horizon 0..2)              */
-  /* ------------------------------------------------------------------ */
-  useEffect(() => {
-    const need = layers.uncertainty || sideBySide || renderMode === 'uncertainty'
-    if (!need) return undefined
-    const cached = cachedUncertainty(timestep, horizon)
+    if (!showUncertainty) return undefined
+    const cached = cachedUncertainty(timestep, 0)
     if (cached) { setUncertainty(cached); return undefined }
     let alive = true
-    setBusy((b) => ({ ...b, unc: true }))
-    fetchUncertainty(timestep, horizon)
+    fetchUncertainty(timestep, 0)
       .then((u) => { if (alive) setUncertainty(u) })
-      .catch((e) => { if (alive) setError(e.message) })
-      .finally(() => { if (alive) setBusy((b) => ({ ...b, unc: false })) })
+      .catch(() => { if (alive) setUncertainty(null) })
     return () => { alive = false }
-  }, [timestep, horizon, layers.uncertainty, sideBySide, renderMode])
+  }, [timestep, showUncertainty])
 
-  /* ------------------------------------------------------------------ */
-  /* Timeline autoplay — state only, never touches scroll                 */
-  /* ------------------------------------------------------------------ */
   useEffect(() => {
     if (!playing || !meta) return undefined
-    playRef.current = setInterval(() => {
-      setTimestep((t) => (t + 1 >= meta.n_timesteps ? 0 : t + 1))
-    }, speed)
-    return () => clearInterval(playRef.current)
+    const id = setInterval(() => setTimestep((t) => (t + 1 >= meta.n_timesteps ? 0 : t + 1)), speed)
+    return () => clearInterval(id)
   }, [playing, meta, speed])
 
-  /* ------------------------------------------------------------------ */
-  /* Animation helpers                                                    */
-  /* ------------------------------------------------------------------ */
-  const stopAnims = useCallback(() => {
-    if (pulseRef.current) { cancelAnimationFrame(pulseRef.current); pulseRef.current = null }
-    if (vesselRef.current) { cancelAnimationFrame(vesselRef.current); vesselRef.current = null }
-    setPulseT(null)
-    setVesselT(null)
-  }, [])
-
-  const sweep = useCallback((ms = 2100) => {
-    if (pulseRef.current) cancelAnimationFrame(pulseRef.current)
-    const t0 = performance.now()
-    const step = (now) => {
-      const t = Math.min(1, (now - t0) / ms)
-      setPulseT(t)
-      if (t < 1) pulseRef.current = requestAnimationFrame(step)
-      else { pulseRef.current = null; setPulseT(null) }
-    }
-    pulseRef.current = requestAnimationFrame(step)
-  }, [])
-
-  const sailVessel = useCallback((ms = 2400) => {
-    if (vesselRef.current) cancelAnimationFrame(vesselRef.current)
+  /** Make an action visible on the chart without faking any result. */
+  const sweep = useCallback((ms = 1600) => {
+    if (sweepRef.current) cancelAnimationFrame(sweepRef.current)
     const t0 = performance.now()
     const step = (now) => {
       const t = Math.min(1, (now - t0) / ms)
       setVesselT(t)
-      if (t < 1) vesselRef.current = requestAnimationFrame(step)
+      if (t < 1) sweepRef.current = requestAnimationFrame(step)
       else {
-        vesselRef.current = null
-        setVesselT(null)
-        setVesselPark(1)
-        window.setTimeout(() => setVesselPark(0), 3400)
+        sweepRef.current = null
+        setVesselT(1)
+        setTimeout(() => setVesselT(null), 2600)
       }
     }
-    vesselRef.current = requestAnimationFrame(step)
+    sweepRef.current = requestAnimationFrame(step)
   }, [])
-
-  useEffect(() => stopAnims, [stopAnims])
-
-  /* ------------------------------------------------------------------ */
-  /* Stage changes are always visibly confirmed                          */
-  /* ------------------------------------------------------------------ */
-  const goStage = useCallback((key) => {
-    setStage(key)
-    setFlashKey((k) => k + 1)
-    if (key === 'final') setPlaying(false)
-    const card = STAGE_CARD[key]
-    if (card) setFocus(card)
-  }, [])
+  useEffect(() => () => { if (sweepRef.current) cancelAnimationFrame(sweepRef.current) }, [])
 
   /* ------------------------------------------------------------------ */
-  /* ACTION 1 — OPTIMIZE ROUTE                                           */
+  /* ACTION — OPTIMIZE ROUTE  (real POST)                                */
   /* ------------------------------------------------------------------ */
   const onOptimize = useCallback(async () => {
-    setBusy((b) => ({ ...b, route: true }))
-    setError(null)
-    setPlanResult({ tone: 'busy', text: `Querying /api/route/at/${timestep} · A* + CostMap on real SIC` })
-    stopAnims()
-    goStage('route')
-    const t0 = performance.now()
+    setBusy((b) => ({ ...b, optimize: true }))
+    setNotice({ tone: 'busy', text: 'POST /api/route/optimize · A* + CostMap on the real SIC field' })
+    setRr(null)
+    setAfterSlice(null)
+    setRrBefore(null)
     try {
-      const r = await fetchRouteAt(timestep)
-      await holdBusyWindow(t0, MIN_BUSY_MS.route)
-      setPlan(r)
-      setRouteVisible(true)
-      setLayers((l) => ({ ...l, route: true, risk: true }))
+      const res = await optimizeRoute({
+        start_lat: start.lat, start_lon: start.lon,
+        goal_lat: goal.lat, goal_lon: goal.lon,
+        timestep,
+      })
+      setPlan(res)
+      setTimestep(res.timestep)
       sweep()
-      sailVessel()
-      setPlanResult({
-        tone: r.success ? 'ok' : 'bad',
-        text: r.success
-          ? `SUCCESS · ${r.waypoints} waypoints · ${Number(r.route_length_grid_units).toFixed(2)} units · mean SIC ${Number(r.mean_sic).toFixed(4)} · ${r.nan_cells_on_route} NaN cells`
-          : `FAILED · no navigable path at D${timestep}`,
-        date: r.date,
+      setNotice({
+        tone: 'ok',
+        text: `OPTIMIZED · ${res.waypoints} waypoints · ${fmt(res.route_length, 2)} grid units · ${fmt(res.route_length_km, 0)} km · mean SIC ${fmt(res.mean_sic)} · max ${fmt(res.max_sic)} · ${res.nan_cells} invalid cells`,
       })
     } catch (e) {
-      setError(e.message)
-      setPlanResult({ tone: 'bad', text: e.message })
+      setPlan(null)
+      setNotice({ tone: 'bad', text: `REJECTED — ${e.reason || 'error'}: ${e.message}` })
     } finally {
-      setBusy((b) => ({ ...b, route: false }))
+      setBusy((b) => ({ ...b, optimize: false }))
     }
-  }, [timestep, sweep, sailVessel, stopAnims, goStage])
+  }, [start, goal, timestep, sweep])
 
   /* ------------------------------------------------------------------ */
-  /* ACTION 2 — DYNAMIC REROUTE  (verified GET /api/reroute/3)            */
+  /* ACTION — DYNAMIC REROUTE  (real POST on a later real field)         */
   /* ------------------------------------------------------------------ */
   const onReroute = useCallback(async () => {
+    if (!plan) return
+    const target = rrTarget == null ? Math.min(timestep + 1, (meta?.n_timesteps ?? 2) - 1) : rrTarget
     setBusy((b) => ({ ...b, reroute: true }))
-    setError(null)
-    stopAnims()
-    setTimestep(TARGET_STEP)
-    setRrResult({ tone: 'busy', text: `GET /api/reroute/3 · re-planning on the D${TARGET_STEP} real SIC forecast` })
-    goStage('reroute')
-    const t0 = performance.now()
+    setNotice({ tone: 'busy', text: `POST /api/route/reroute · re-planning on the D${target} real SIC forecast` })
     try {
-      const [rr, after] = await Promise.all([
-        fetchRerouteDemo(),      // GET /api/reroute/3?origin_timestep=0
-        fetchSlice(TARGET_STEP),
-      ])
-      await holdBusyWindow(t0, MIN_BUSY_MS.reroute)
-      setReroute(rr)
+      const res = await rerouteRoute({
+        original_route: {
+          path: plan.path, start: plan.start, goal: plan.goal,
+          timestep: plan.timestep, mean_sic: plan.mean_sic, max_sic: plan.max_sic,
+        },
+        new_timestep: target,
+      })
+      const [after] = await Promise.all([fetchSlice(res.new_timestep)])
+      setRr(res)
+      setRrBefore(slice)   // the D<origin> frame, captured before the timeline moves
       setAfterSlice(after)
-      setRouteVisible(true)
-      setLayers((l) => ({ ...l, route: true, risk: true, rerouteDiff: true }))
-      sweep(2500)
-      sailVessel(2800)
-      const same = rr.comparison?.changed_cells === 0
-      setRrResult({
-        tone: rr.status === 'SUCCESS' ? 'ok' : 'bad',
-        text: rr.status === 'SUCCESS'
-          ? `${rr.status} · D${rr.origin_timestep}→D${rr.reroute_timestep} (${rr.reroute_date}) · jaccard ${Number(rr.comparison.jaccard_overlap).toFixed(3)} · coverage ${Number(rr.comparison.route_coverage).toFixed(3)} · ${rr.comparison.changed_cells} changed cells${same ? ' · safe corridor unchanged' : ''}`
-          : `${rr.status} · no route at D${rr.reroute_timestep}`,
+      setTimestep(res.new_timestep)
+      sweep(1800)
+      const c = res.route_comparison
+      setNotice({
+        tone: 'ok',
+        text: c.identical_path
+          ? `RE-OPTIMIZED D${res.origin_timestep} → D${res.new_timestep} · corridor unchanged (0 cells changed) — the cost surface did not move the optimum`
+          : `RE-OPTIMIZED D${res.origin_timestep} → D${res.new_timestep} · ${c.changed_cells} changed cells in ${res.changed_segments.length} segment(s) · overlap ${fmt(c.jaccard_overlap, 3)}`,
       })
     } catch (e) {
-      setError(e.message)
-      setRrResult({ tone: 'bad', text: e.message })
+      setNotice({ tone: 'bad', text: `REROUTE REJECTED — ${e.reason || 'error'}: ${e.message}` })
     } finally {
       setBusy((b) => ({ ...b, reroute: false }))
     }
-  }, [sweep, sailVessel, stopAnims, goStage])
+  }, [plan, rrTarget, timestep, meta, slice, sweep])
 
-  /* ------------------------------------------------------------------ */
-  /* Derived geometry — API paths only, never fabricated                  */
-  /* ------------------------------------------------------------------ */
-  const primaryRoute = useMemo(() => {
-    if (reroute?.rerouted_route?.path?.length) return reroute.rerouted_route.path
-    if (plan?.path?.length) return plan.path
-    if (route?.path?.length) return route.path
-    return null
-  }, [reroute, plan, route])
+  const onPickCell = useCallback((cell) => {
+    if (!pickMode) return
+    const next = { lat: Number(cell.lat.toFixed(2)), lon: Number(cell.lon.toFixed(2)) }
+    if (pickMode === 'start') setStart(next)
+    else setGoal(next)
+    setNotice({
+      tone: cell.valid ? 'ok' : 'warn',
+      text: cell.valid
+        ? `${pickMode.toUpperCase()} set to ${dms(next.lat, 'N', 'S')} ${dms(next.lon, 'E', 'W')} (navigable cell)`
+        : `${pickMode.toUpperCase()} set to a NON-NAVIGABLE cell — the backend will snap it or reject the route`,
+    })
+    setPickMode(null)
+  }, [pickMode])
 
-  useEffect(() => {
-    if (primaryRoute) setRouteVisible(true)
-  }, [primaryRoute])
-
-  const originRoute = useMemo(() => {
-    if (reroute?.original_route?.path?.length) return reroute.original_route.path
-    if (reroute && plan?.path?.length) return plan.path
-    if (reroute && route?.path?.length) return route.path
-    return null
-  }, [reroute, plan, route])
-
-  const changedCells = useMemo(() => {
-    if (!reroute || !reroute.original_route?.path) return null
-    const n = reroute.comparison?.changed_cells
-    if (!n) return new Set()
-    const a = new Set(reroute.original_route.path.map(([r, c]) => `${r},${c}`))
-    const b = new Set((reroute.rerouted_route?.path || []).map(([r, c]) => `${r},${c}`))
-    const diff = new Set()
-    a.forEach((k) => { if (!b.has(k)) diff.add(k) })
-    b.forEach((k) => { if (!a.has(k)) diff.add(k) })
-    return diff
-  }, [reroute])
-
-  const beforeSlice = slice
-  const diff = useMemo(
-    () => (beforeSlice && afterSlice ? buildDiff(beforeSlice, afterSlice) : null),
-    [beforeSlice, afterSlice],
-  )
-
-  /** The plan currently drawn on the chart: rerouted > optimized > artifact. */
-  const activePlan = reroute?.rerouted_route?.path?.length
-    ? reroute.rerouted_route
-    : plan || route
-
-  const routeLabel = reroute
-    ? `UPDATED D${reroute.reroute_timestep}`
-    : plan
-      ? `OPTIMIZED D${plan.timestep ?? timestep}`
-      : 'AWAITING OPTIMIZE'
-
-  const corridorUnchanged =
-    !!reroute && reroute.comparison?.changed_cells === 0 && !!originRoute
-
-  const availability = useMemo(() => ({
-    sic: true,
-    nonNav: true,
-    route: true,
-    vessel: true,
-    uncertainty: (meta?.uncertainty_horizons ?? 0) > 0,
-    current: !!cmems?.available,
-    risk: true,
-    rerouteDiff: !!reroute,
-  }), [meta, cmems, reroute])
-
-  /* ------------------------------------------------------------------ */
-  /* Vessel telemetry — deterministic, from the real route polyline      */
-  /* ------------------------------------------------------------------ */
-  const vesselTNow = vesselT != null ? vesselT : (routeVisible && vesselPark ? 1 : null)
-  const vessel = useMemo(() => {
-    if (vesselTNow == null || !primaryRoute || !meta) return null
-    const fi = vesselTNow * (primaryRoute.length - 1)
-    const i0 = Math.floor(fi)
-    const i1 = Math.min(primaryRoute.length - 1, i0 + 1)
-    const f = fi - i0
-    const r = primaryRoute[i0][0]
-    const c = primaryRoute[i0][1]
-    const sic = slice && slice.valid[r * slice.nCols + c]
-      ? slice.values[r * slice.nCols + c] / 255
-      : null
-    return {
-      lat: meta.lat[r],
-      lon: meta.lon[c],
-      progress: vesselTNow,
-      sic,
-      waypoint: i0 + 1,
-      of: primaryRoute.length,
-    }
-  }, [vesselTNow, primaryRoute, slice, meta])
-
-  /* ------------------------------------------------------------------ */
-  /* The leg, for the on-chart START → DESTINATION readout                */
-  /* ------------------------------------------------------------------ */
-  const leg = useMemo(() => {
-    const latlon = (v) =>
-      `${Math.abs(Number(v[0])).toFixed(2)}°${Number(v[0]) < 0 ? 'S' : 'N'} ` +
-      `${Math.abs(Number(v[1])).toFixed(2)}°E`
-    const name = route?.leg?.name ? String(route.leg.name).split(/\s*(?:->|→)\s*/) : null
-    const sl = route?.leg?.start_latlon
-    const gl = route?.leg?.goal_latlon
-    const start = sl
-      ? `${name?.[0] || 'Start'} · ${latlon(sl)}`
-      : (primaryRoute ? `cell ${primaryRoute[0][0]},${primaryRoute[0][1]}` : '—')
-    const goal = gl
-      ? `${name?.[1] || 'Destination'} · ${latlon(gl)}`
-      : (primaryRoute
-        ? `cell ${primaryRoute[primaryRoute.length - 1][0]},${primaryRoute[primaryRoute.length - 1][1]}`
-        : '—')
-    return { start, goal }
-  }, [route, primaryRoute])
-
-  const statusChip = useMemo(() => {
-    if (busy.route) {
-      return { tone: 'busy', lines: [`OPTIMIZING ROUTE — D${timestep}`,
-        'A* + CostMap on real SIC'] }
-    }
-    if (busy.reroute) {
-      return { tone: 'warn', lines: [`REROUTING — D${ORIGIN_STEP} → D${TARGET_STEP}`,
-        're-planning on the later real forecast'] }
-    }
-    if (renderMode === 'diff') {
-      return diff
-        ? { tone: 'warn', lines: [
-            'ENVIRONMENT DIFFERENCE — D0 → D3',
-            `${diff.nIncreased.toLocaleString()} ↑ · ${diff.nDecreased.toLocaleString()} ↓ · max |Δ| ${diff.vmax.toFixed(3)}`,
-          ] }
-        : { tone: 'warn', lines: ['ENVIRONMENT DIFFERENCE', 'run DYNAMIC REROUTE to compute it'] }
-    }
-    if (renderMode === 'uncertainty') {
-      return uncertainty
-        ? { tone: 'busy', lines: [
-            `FORECAST UNCERTAINTY — HORIZON ${uncertainty.horizon + 1} (D+${uncertainty.horizon + 1})`,
-            `mean ${Number(uncertainty.stats.mean).toFixed(4)} · max ${Number(uncertainty.stats.max).toFixed(4)}`,
-          ] }
-        : { tone: 'busy', lines: ['FORECAST UNCERTAINTY', 'reading artifact…'] }
-    }
-    if (reroute) {
-      return {
-        tone: reroute.status === 'SUCCESS' ? 'ok' : 'bad',
-        lines: [
-          `ROUTE RE-OPTIMIZED — ${reroute.status} (D${reroute.reroute_timestep}, ${reroute.reroute_date})`,
-          corridorUnchanged
-            ? 'corridor unchanged · 0 cells changed · safe'
-            : `${reroute.comparison?.changed_cells ?? 0} cells changed`,
-        ],
-      }
-    }
-    if (plan?.success) {
-      return {
-        tone: 'ok',
-        lines: [
-          `ROUTE OPTIMIZED — SUCCESS (D${plan.timestep}, ${plan.date})`,
-          `${plan.waypoints} waypoints · ${Number(plan.max_sic).toFixed(4)} max SIC · ${plan.nan_cells_on_route} NaN cells`,
-        ],
-      }
-    }
-    return null
-  }, [busy.route, busy.reroute, reroute, plan, corridorUnchanged, timestep, renderMode, diff, uncertainty])
-
-  const s = slice?.stats
-
-  /* ------------------------------------------------------------------ */
-  /* Render                                                              */
-  /* ------------------------------------------------------------------ */
-  if (loading) {
-    return (
-      <div className="boot">
-        <div className="spinner" />
-        <div>Loading the real SIC forecast artifact from the backend…</div>
-      </div>
-    )
+  const applyPreset = (p) => {
+    setStart(p.start)
+    setGoal(p.goal)
+    setTimestep(p.timestep)
+    setPlan(null)
+    setRr(null)
+    setNotice({ tone: 'busy', text: `Loaded “${p.name}” — press OPTIMIZE ROUTE to run A* + CostMap` })
   }
 
-  if (error && !meta) {
+  /* ------------------------------------------------------------------ */
+  /* Derived chart state                                                  */
+  /* ------------------------------------------------------------------ */
+  const primaryRoute = useMemo(() => {
+    if (rr?.updated_route?.path?.length) return rr.updated_route.path
+    if (plan?.path?.length) return plan.path
+    return null
+  }, [rr, plan])
+
+  const originRoute = useMemo(
+    () => (rr?.original_route?.path?.length ? rr.original_route.path : null),
+    [rr],
+  )
+
+  const changedCells = useMemo(() => {
+    if (!originRoute || !primaryRoute) return null
+    const a = new Set(originRoute.map(([r, c]) => `${r},${c}`))
+    const b = new Set(primaryRoute.map(([r, c]) => `${r},${c}`))
+    const d = new Set()
+    a.forEach((k) => { if (!b.has(k)) d.add(k) })
+    b.forEach((k) => { if (!a.has(k)) d.add(k) })
+    return d
+  }, [originRoute, primaryRoute])
+
+  const envDiff = useMemo(
+    () => (rrBefore && afterSlice ? buildDiff(rrBefore, afterSlice) : null),
+    [rrBefore, afterSlice],
+  )
+
+  /** Pending selection, in grid indices, for the pre-route chart state. */
+  const selection = useMemo(() => {
+    if (!meta || primaryRoute) return null
+    const idx = (ll) => {
+      let r = 0
+      let c = 0
+      let bd = Infinity
+      meta.lat.forEach((v, i) => { const d = Math.abs(v - ll.lat); if (d < bd) { bd = d; r = i } })
+      bd = Infinity
+      meta.lon.forEach((v, i) => { const d = Math.abs(v - ll.lon); if (d < bd) { bd = d; c = i } })
+      const nav = slice ? !!slice.valid[r * slice.nCols + c] : true
+      return { row: r, col: c, navigable: nav }
+    }
+    return { start: idx(start), goal: idx(goal), lat: meta.lat, lon: meta.lon }
+  }, [meta, start, goal, slice, primaryRoute])
+
+  const s = slice?.stats
+  const navPct = s && s.n_cells ? (s.n_navigable / s.n_cells) * 100 : null
+
+  const statusChip = useMemo(() => {
+    // Only while a request is in flight. Once a route is on the chart the
+    // pipeline strip, the notice and the metrics card carry the status, and a
+    // chip in the plate's top-left would sit on top of the route's start.
+    if (busy.optimize) return { tone: 'busy', lines: [`OPTIMIZING — D${timestep}`, 'A* + CostMap on the real SIC field'] }
+    if (busy.reroute) return { tone: 'warn', lines: [`REROUTING — D${rrTarget ?? timestep + 1}`, 're-planning on a later real forecast'] }
+    return null
+  }, [busy.optimize, busy.reroute, timestep, rrTarget])
+
+  if (fatal) {
     return (
       <div className="boot">
         <h2>Backend unreachable</h2>
-        <p>{error}</p>
+        <p>{fatal}</p>
         <p className="hint">Start it with <code>python -m backend.api.main</code></p>
       </div>
     )
   }
 
   return (
-    <div className="app">
+    <div className="planner">
       <Header meta={meta} status={status} />
 
-      {error ? <div className="errbar">⚠ {error}</div> : null}
-
-      <div className="workspace">
-        {/* ---------------------------------------------- LEFT: controls */}
-        <LeftSidebar
-          className={leftOpen ? 'open' : ''}
-          meta={meta}
-          stage={stage}
-          setStage={goStage}
-          flashKey={flashKey}
-          layers={layers}
-          setLayers={setLayers}
-          availability={availability}
-          renderMode={renderMode}
-          setRenderMode={setRenderMode}
-          diffAvailable={!!diff}
-          busy={busy}
-          plan={plan}
-          route={route}
-          reroute={reroute}
-          onOptimize={onOptimize}
-          onReroute={onReroute}
-          legend={(
-            <Legend
-              renderMode={renderMode}
-              stats={s}
-              uncertainty={uncertainty}
-              diff={diff}
-              changed={changedCells}
-              hasReroute={!!reroute}
-              routeVisible={routeVisible}
-              layers={layers}
-              cmems={cmems}
-            />
-          )}
-          onClose={() => setLeftOpen(false)}
-        />
-
-        {/* ------------------------------------------------ CENTER: map */}
+      <div className="plan-main">
+        {/* ==================================================== THE MAP */}
         <section className="mapcol">
           <SicMap
             slice={slice}
-            lat={meta.lat}
-            lon={meta.lon}
+            lat={meta?.lat || []}
+            lon={meta?.lon || []}
             uncertainty={uncertainty}
-            diff={diff}
-            renderMode={renderMode}
+            renderMode={showUncertainty && uncertainty ? 'uncertainty' : 'sic'}
             uncMax={uncertainty?.stats?.max ?? null}
-            layers={layers}
+            layers={{
+              sic: true,
+              nonNav: true,
+              route: true,
+              vessel: true,
+              uncertainty: showUncertainty,
+              rerouteDiff: true,
+            }}
             primaryRoute={primaryRoute}
             originRoute={originRoute}
             changedCells={changedCells}
-            routeVisible={routeVisible && !!primaryRoute}
-            pulseT={pulseT}
-            vesselT={vesselTNow}
-            corridorUnchanged={corridorUnchanged}
+            routeVisible={!!primaryRoute}
+            selection={selection}
+            pickMode={pickMode}
+            onPickCell={onPickCell}
+            pulseT={null}
+            vesselT={vesselT}
+            corridorUnchanged={!!rr && rr.route_comparison.identical_path}
             statusChip={statusChip}
             hud={{
-              timestep: slice?.timestep ?? 0,
+              timestep: slice?.timestep ?? timestep,
               date: slice?.date ?? '—',
-              showRoute: routeVisible && !!primaryRoute,
-              routeLabel,
-              waypoints: activePlan?.waypoints ?? primaryRoute?.length ?? '—',
-              length: activePlan?.route_length_grid_units == null
-                ? '—'
-                : Number(activePlan.route_length_grid_units).toFixed(2),
-              meanSic: activePlan?.mean_sic == null ? '—' : Number(activePlan.mean_sic).toFixed(4),
-              maxSic: activePlan?.max_sic == null ? '—' : Number(activePlan.max_sic).toFixed(4),
-              start: leg.start,
-              goal: leg.goal,
-              hasReroute: !!reroute,
-              nonNav: !!layers.nonNav,
-              vessel,
-              source: renderMode === 'uncertainty'
-                ? 'uncertainty_2026.npy'
-                : renderMode === 'diff'
-                  ? 'routing_sic_2026.npy Δ(D0,D3)'
-                  : 'routing_sic_2026.npy',
+              showRoute: !!primaryRoute,
+              routeLabel: rr ? `UPDATED D${rr.new_timestep}` : plan ? `OPTIMIZED D${plan.timestep}` : '—',
+              waypoints: plan?.waypoints ?? '—',
+              length: plan ? fmt(plan.route_length, 2) : '—',
+              meanSic: plan ? fmt(plan.mean_sic) : '—',
+              maxSic: plan ? fmt(plan.max_sic) : '—',
+              start: `${dms(start.lat, 'N', 'S')} ${dms(start.lon, 'E', 'W')}`,
+              goal: `${dms(goal.lat, 'N', 'S')} ${dms(goal.lon, 'E', 'W')}`,
+              hasReroute: !!rr,
+              nonNav: true,
+              vessel: null,
+              source: 'routing_sic_2026.npy (API raster)',
             }}
           />
-          <button
-            type="button"
-            className="drawer-tab left"
-            onClick={() => { setLeftOpen((v) => !v); setRightOpen(false) }}
-            aria-label="toggle controls"
-          >
-            ☰
-          </button>
-          <button
-            type="button"
-            className="drawer-tab right"
-            onClick={() => { setRightOpen((v) => !v); setLeftOpen(false) }}
-            aria-label="toggle intelligence"
-          >
-            ▤
-          </button>
+
+          {/* ----------------------------- pipeline strip (top centre) */}
+          <div className="float pipeline" aria-label="pipeline">
+            {[
+              ['INPUT', `${dms(start.lat, 'N', 'S')}, ${dms(start.lon, 'E', 'W')} → ${dms(goal.lat, 'N', 'S')}, ${dms(goal.lon, 'E', 'W')}`],
+              ['SIC FIELD', `D${slice?.timestep ?? timestep} · ${slice?.date ?? '—'}`],
+              ['NAVIGABILITY', s ? `${s.n_navigable.toLocaleString()} cells` : '—'],
+              ['COST MAP', 'SIC + distance'],
+              ['A* + COSTMAP', busy.optimize ? 'running…' : 'ready'],
+              ['ROUTE', plan ? `${plan.waypoints} wp` : '—'],
+              ['VALIDATION', plan ? (plan.nan_cells === 0 ? 'PASS' : 'FAIL') : '—'],
+            ].map(([k, v], i, arr) => (
+              <React.Fragment key={k}>
+                <div className={`pl-step ${k === 'VALIDATION' && plan ? (plan.nan_cells === 0 ? 'ok' : 'bad') : ''}`}>
+                  <span className="pl-k">{k}</span>
+                  <span className="pl-v">{v}</span>
+                </div>
+                {i < arr.length - 1 ? <span className="pl-arrow">→</span> : null}
+              </React.Fragment>
+            ))}
+          </div>
+
+          {/* --------------------------------------- control card (left) */}
+          <aside className="float ctrl">
+            <div className="fc-h">
+              <span>ROUTE PLANNER</span>
+              <span className="fc-tag">real SIC + A*</span>
+            </div>
+
+            <Endpoint
+              label="START"
+              value={start}
+              onChange={setStart}
+              onPick={() => setPickMode(pickMode === 'start' ? null : 'start')}
+              picking={pickMode === 'start'}
+            />
+            <Endpoint
+              label="DESTINATION"
+              value={goal}
+              onChange={setGoal}
+              onPick={() => setPickMode(pickMode === 'goal' ? null : 'goal')}
+              picking={pickMode === 'goal'}
+            />
+
+            <div className="fc-row">
+              <button type="button" className="btn btn-ghost sm"
+                onClick={() => { setStart(goal); setGoal(start) }}>
+                ⇅ swap
+              </button>
+              <select className="sel sm" defaultValue="" onChange={(e) => {
+                const p = PRESETS[Number(e.target.value)]
+                if (p) applyPreset(p)
+                e.target.value = ''
+              }}>
+                <option value="">presets…</option>
+                {PRESETS.map((p, i) => <option key={p.name} value={i}>{p.name}</option>)}
+              </select>
+            </div>
+
+            <div className="fc-day">
+              <span className="fc-lab">FORECAST DAY</span>
+              <b>D{timestep}</b>
+              <span className="fc-date">{slice?.date ?? meta?.dates?.[timestep] ?? '—'}</span>
+              <input
+                className="rng" type="range" min={0} max={(meta?.n_timesteps ?? 1) - 1}
+                value={timestep}
+                onChange={(e) => { setTimestep(Number(e.target.value)); setRr(null) }}
+                aria-label="forecast day"
+              />
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-primary wide"
+              onClick={onOptimize}
+              disabled={busy.optimize || busy.slice}
+            >
+              {busy.optimize ? 'OPTIMIZING…' : '⚡ OPTIMIZE ROUTE'}
+            </button>
+
+            <div className="fc-row reroute">
+              <span className="fc-lab">REROUTE TO</span>
+              <input
+                className="num xs" type="number" min={0} max={(meta?.n_timesteps ?? 1) - 1}
+                value={rrTarget ?? ''}
+                placeholder={`D${Math.min((plan?.timestep ?? timestep) + 1, (meta?.n_timesteps ?? 2) - 1)}`}
+                onChange={(e) => setRrTarget(e.target.value === '' ? null : Number(e.target.value))}
+              />
+              <button
+                type="button" className="btn btn-warn sm"
+                onClick={onReroute}
+                disabled={!plan || busy.reroute || busy.optimize}
+                title={plan ? 'Re-plan the same leg on a later real SIC forecast day' : 'Optimize a route first'}
+              >
+                {busy.reroute ? 'REROUTING…' : '↻ DYNAMIC REROUTE'}
+              </button>
+            </div>
+
+            <label className="chk">
+              <input type="checkbox" checked={showUncertainty}
+                onChange={(e) => setShowUncertainty(e.target.checked)} />
+              forecast uncertainty layer <span className="muted">(artifact)</span>
+            </label>
+
+            {notice ? <div className={`fc-notice ${notice.tone}`}>{notice.text}</div> : null}
+          </aside>
+
+          {/* ------------------------------------------- legend (bottom) */}
+          <div className="float legend-card">
+            <div className="lg-t">SIC 0 → 1</div>
+            <div className="lg-ramp" />
+            <div className="lg-keys">
+              <span><i className="sw-nonnav" />non-navigable (NaN)</span>
+              <span><i className="sw-route" />route</span>
+              {rr ? <span><i className="sw-orig" />original (D{rr.origin_timestep})</span> : null}
+              {changedCells && changedCells.size ? <span><i className="sw-changed" />changed ({changedCells.size})</span> : null}
+              <span><i className="sw-start" />start</span>
+              <span><i className="sw-goal" />dest</span>
+            </div>
+            {s ? (
+              <div className="lg-stats">
+                navigable <b>{s.n_navigable.toLocaleString()}</b>
+                {navPct != null ? ` (${navPct.toFixed(1)}%)` : ''} · non-navigable{' '}
+                <b>{s.n_non_navigable.toLocaleString()}</b>
+              </div>
+            ) : null}
+          </div>
         </section>
 
-        {/* ------------------------------------- RIGHT: compact intel */}
-        <IntelRail
-          className={rightOpen ? 'open' : ''}
-          focus={focus}
-          onFocus={setFocus}
-          onClose={() => setRightOpen(false)}
-          data={{
-            slice, meta, uncertainty, uncSummary,
-            horizon,
-            setHorizon: (h) => {
-              setHorizon(h)
-              setRenderMode('uncertainty')
-              setLayers((l) => ({ ...l, uncertainty: true }))
-            },
-            sideBySide,
-            setSideBySide,
-            onOverlay: () => {
-              setRenderMode('sic')
-              setLayers((l) => ({ ...l, uncertainty: !l.uncertainty }))
-            },
-            setRenderMode,
-            busy, plan, route, reroute, planResult, rrResult, profile,
-            src: activePlan,
-            vesselT: vesselTNow,
-            beforeSlice, afterSlice, diff, lat: meta.lat, lon: meta.lon,
-            originRoute, primaryRoute,
-            status, ensemble, limitations, cmems,
-            originStep: ORIGIN_STEP, targetStep: TARGET_STEP,
-          }}
-        />
+        {/* ============================================ RIGHT RAIL */}
+        <aside className="rail">
+          <MetricsCard plan={plan} rr={rr} slice={slice} timestep={timestep} />
+
+          {rr ? <RerouteCard rr={rr} envDiff={envDiff} /> : null}
+
+          <EnvironmentCard
+            status={status} cmems={cmems} meta={meta} slice={slice}
+            limitations={limitations} uncertainty={uncertainty}
+            showUncertainty={showUncertainty}
+          />
+        </aside>
       </div>
 
       <Timeline
         metadata={meta}
         timestep={timestep}
-        onChange={(t) => { setTimestep(t); if (stage !== 'final') goStage('change') }}
+        onChange={(t) => { setTimestep(t); setRr(null) }}
         playing={playing}
         onPlayToggle={() => setPlaying((p) => !p)}
         speed={speed}
         setSpeed={setSpeed}
-        originStep={ORIGIN_STEP}
-        targetStep={TARGET_STEP}
-        rerouteTimestep={reroute ? reroute.reroute_timestep : null}
-        onJump={(d) => setTimestep(d)}
+        originStep={plan?.timestep ?? BASELINE.timestep}
+        targetStep={rr?.new_timestep ?? (plan ? plan.timestep + 1 : 3)}
+        rerouteTimestep={rr ? rr.new_timestep : null}
+        onJump={(d) => { setTimestep(d); setRr(null) }}
         busy={busy}
       />
+    </div>
+  )
+}
 
-      {stage === 'final' ? (
-        <FinalScreen
-          meta={meta} route={route} plan={plan} reroute={reroute} profile={profile}
-          onClose={() => goStage('environment')}
-          onRerun={() => {
-            setReroute(null); setAfterSlice(null); setPlan(null)
-            setRouteVisible(false); setVesselPark(0)
-            setLayers(DEFAULT_LAYERS)
-            setRenderMode('sic')
-            setTimestep(ORIGIN_STEP)
-            goStage('intro')
-          }}
-        />
-      ) : null}
-
-      {/* visible confirmation banner on every stage transition */}
-      <div className="stage-flash" key={flashKey} aria-live="polite">
-        <span className="sf-n">
-          {String((STAGES.find((x) => x.key === stage)?.num ?? 1)).padStart(2, '0')}
-        </span>
-        <span className="sf-t">{STAGES.find((x) => x.key === stage)?.label}</span>
-        <span className="sf-s">/ 07</span>
+/* ------------------------------------------------------------------ */
+/* Endpoint editor                                                     */
+/* ------------------------------------------------------------------ */
+function Endpoint({ label, value, onChange, onPick, picking }) {
+  return (
+    <div className={`ep ${picking ? 'picking' : ''}`}>
+      <div className="ep-h">
+        <span className="ep-lab">{label}</span>
+        <button type="button" className="btn btn-ghost xs" onClick={onPick}>
+          {picking ? 'click the chart…' : '📍 pick on map'}
+        </button>
+      </div>
+      <div className="ep-fields">
+        <label>lat<input className="num" type="number" step="0.25" value={value.lat}
+          onChange={(e) => onChange({ ...value, lat: Number(e.target.value) })} /></label>
+        <label>lon<input className="num" type="number" step="0.25" value={value.lon}
+          onChange={(e) => onChange({ ...value, lon: Number(e.target.value) })} /></label>
       </div>
     </div>
   )
 }
 
-function Legend({ renderMode, stats, uncertainty, diff, changed, hasReroute, routeVisible, layers, cmems }) {
+/* ------------------------------------------------------------------ */
+/* Route metrics — every value comes from the API response             */
+/* ------------------------------------------------------------------ */
+function MetricsCard({ plan, rr, slice, timestep }) {
+  const v = rr ? rr.updated_route : plan
+  const validation = v?.validation
+  const pass = validation
+    ? validation.all_cells_in_bounds && validation.reaches_goal
+      && validation.contiguous_8_connected && validation.nan_cells === 0
+      && validation.non_navigable_cells === 0
+    : null
+
   return (
-    <div className="legend">
-      <div className="lg-items">
-        {renderMode === 'uncertainty' ? (
-          <>
-            <span><i className="lg-swatch" style={{ background: 'linear-gradient(90deg,#0c0822,#2d1854,#582a82,#8c3c96,#c45c8c,#ee8c8c,#ffd6eb)' }} /> forecast uncertainty 0 → {uncertainty?.stats?.max?.toFixed(3) ?? '—'}</span>
-            <span><i className="lg-swatch sw-nonnav" /> outside model domain (no value)</span>
-          </>
-        ) : renderMode === 'diff' && diff ? (
-          <>
-            <span><i className="lg-swatch" style={{ background: '#0a101a' }} /> unchanged</span>
-            <span><i className="lg-swatch" style={{ background: '#12b3e0' }} /> ice retreated (Δ &lt; 0)</span>
-            <span><i className="lg-swatch" style={{ background: '#f6a11a' }} /> ice advanced (Δ &gt; 0)</span>
-            <span><i className="lg-swatch" style={{ background: '#facc15' }} /> became non-navigable</span>
-            <span><i className="lg-swatch" style={{ background: '#38bdf8' }} /> became navigable</span>
-          </>
-        ) : (
-          <>
-            <span><i className="lg-swatch sw-sic" /> sea ice concentration 0.0 → 1.0</span>
-            {layers.nonNav ? <span><i className="lg-swatch sw-nonnav" /> non-navigable (NaN)</span> : null}
-          </>
-        )}
-        {routeVisible ? (
-          <>
-            <span><i className="lg-swatch sw-route" /> {hasReroute ? 'updated safe route' : 'optimized route (A* + CostMap)'}</span>
-            {hasReroute ? <span><i className="lg-swatch sw-orig" /> original route (D0, dashed)</span> : null}
-            {changed && changed.size > 0 ? <span><i className="lg-swatch sw-changed" /> changed cells ({changed.size})</span> : null}
-            <span><i className="lg-swatch sw-start" /> start</span>
-            <span><i className="lg-swatch sw-goal" /> destination</span>
-            {layers.vessel ? <span><i className="lg-swatch" style={{ background: 'rgba(56,189,248,0.5)' }} /> vessel</span> : null}
-          </>
-        ) : null}
-        {layers.uncertainty && renderMode === 'sic' && uncertainty ? (
-          <span><i className="lg-swatch" style={{ background: 'linear-gradient(90deg,#2d1854,#c45c8c)' }} /> uncertainty overlay (H{horizonLabel(uncertainty)})</span>
-        ) : null}
-        {!cmems?.available ? (
-          <span className="lg-off">Ocean current — Unavailable in current deployment</span>
-        ) : null}
+    <div className="card">
+      <div className="card-h">
+        <span>ROUTE METRICS</span>
+        <span className={`pill ${v ? (pass ? 'ok' : 'bad') : 'idle'}`}>
+          {v ? (pass ? 'OPTIMIZED' : 'CHECK FAILED') : 'NO ROUTE'}
+        </span>
       </div>
-      {stats ? (
-        <div className="lg-stats">
-          navigable <b>{stats.n_navigable.toLocaleString()}</b> · non-navigable{' '}
-          <b>{stats.n_non_navigable.toLocaleString()}</b> · mean <b>{Number(stats.mean).toFixed(4)}</b>
+
+      {!v ? (
+        <p className="empty">
+          Set a start and a destination, then press <b>OPTIMIZE ROUTE</b>. The route is
+          computed by the backend A* + CostMap on the real SIC field for the selected day.
+        </p>
+      ) : (
+        <div className="metrics">
+          <Row k="ALGORITHM" v="A* + CostMap" />
+          <Row k="FORECAST DAY" v={`D${v.timestep ?? timestep} · ${v.date ?? slice?.date ?? '—'}`} />
+          <Row k="WAYPOINTS" v={fmtInt(v.waypoints)} />
+          <Row k="DISTANCE" v={`${fmt(v.route_length, 2)} grid units`} sub={v.route_length_km != null ? `${fmtInt(v.route_length_km)} km along path${v.direct_length_km != null ? ` · ${fmtInt(v.direct_length_km)} km direct` : ''}` : null} />
+          <Row k="MEAN SIC" v={fmt(v.mean_sic)} />
+          <Row k="MAX SIC" v={fmt(v.max_sic)} />
+          <Row k="INVALID CELLS" v={`${fmtInt(v.nan_cells)} NaN · ${fmtInt(v.non_navigable_cells)} non-nav`} tone={v.nan_cells || v.non_navigable_cells ? 'bad' : 'ok'} />
+          <Row k="TOTAL COST" v={v.total_cost != null ? fmt(v.total_cost, 3) : '—'} />
+          <Row k="EXPANDED NODES" v={fmtInt(v.expanded_nodes)} />
+          <Row k="SAFETY VALIDATION" v={pass ? 'PASS' : 'FAIL'} tone={pass ? 'ok' : 'bad'} />
+        </div>
+      )}
+
+      {validation ? (
+        <div className="checks">
+          {[
+            ['in bounds', validation.all_cells_in_bounds],
+            ['reaches goal', validation.reaches_goal],
+            ['8-connected', validation.contiguous_8_connected],
+            ['no NaN cells', validation.nan_cells === 0],
+            ['no non-navigable', validation.non_navigable_cells === 0],
+          ].map(([k, ok]) => (
+            <span key={k} className={ok ? 'ok' : 'bad'}>{ok ? '✓' : '✕'} {k}</span>
+          ))}
         </div>
       ) : null}
     </div>
   )
 }
 
-function horizonLabel(u) {
-  return u.horizon != null ? u.horizon + 1 : '?'
+function Row({ k, v, sub, tone }) {
+  return (
+    <div className={`mrow ${tone || ''}`}>
+      <span className="mk">{k}</span>
+      <span className="mv">{v}{sub ? <em>{sub}</em> : null}</span>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Reroute comparison                                                  */
+/* ------------------------------------------------------------------ */
+function RerouteCard({ rr, envDiff }) {
+  const c = rr.route_comparison
+  return (
+    <div className="card">
+      <div className="card-h">
+        <span>DYNAMIC REROUTE</span>
+        <span className={`pill ${c.identical_path ? 'ok' : 'warn'}`}>
+          D{rr.origin_timestep} → D{rr.new_timestep}
+        </span>
+      </div>
+      <div className="metrics">
+        <Row k="ORIGINAL" v={`${fmtInt(rr.original_route.waypoints)} wp · max SIC ${fmt(rr.original_route.max_sic)}`} />
+        <Row k="UPDATED" v={`${fmtInt(rr.updated_route.waypoints)} wp · max SIC ${fmt(rr.updated_route.max_sic)}`} />
+        <Row k="Δ MEAN SIC" v={fmt(rr.metrics.delta.mean_sic)} />
+        <Row k="Δ MAX SIC" v={fmt(rr.metrics.delta.max_sic)} />
+        <Row k="CHANGED CELLS" v={fmtInt(c.changed_cells)} tone={c.changed_cells ? 'warn' : 'ok'} />
+        <Row k="PATH OVERLAP" v={fmt(c.jaccard_overlap, 3)} sub={`coverage ${fmt(c.route_coverage, 3)}`} />
+      </div>
+      {envDiff ? (
+        <div className="env-chg">
+          ENVIRONMENT CHANGE D{rr.origin_timestep} → D{rr.new_timestep}:{' '}
+          <b>{envDiff.nIncreased.toLocaleString()}</b> cells more ice ·{' '}
+          <b>{envDiff.nDecreased.toLocaleString()}</b> less ·{' '}
+          <b>{envDiff.nNavChanged.toLocaleString()}</b> changed navigability
+        </div>
+      ) : null}
+      <div className="seg-list">
+        {rr.changed_segments.length === 0 ? (
+          <div className="muted">No changed segments — the two corridors are identical.</div>
+        ) : (
+          rr.changed_segments.map((sg, i) => (
+            <div key={i} className="seg">
+              <span className={`tag ${sg.route}`}>{sg.route === 'original' ? 'ABANDONED' : 'NEW'}</span>
+              <b>{sg.cells}</b> cells · {fmt(sg.length_grid_units, 1)} units ·{' '}
+              <span className="muted">cell {sg.from_cell.join(',')} → {sg.to_cell.join(',')}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Environment + provenance. Nothing here is ever optimistic.           */
+/* ------------------------------------------------------------------ */
+function EnvironmentCard({ status, cmems, meta, slice, limitations, uncertainty, showUncertainty }) {
+  const sic = status?.environment?.sic
+  const cvar = status?.environment?.cvar
+  const policy = status?.models?.route_policy
+  const ens = status?.models?.sic_forecaster
+  const s = slice?.stats
+
+  return (
+    <div className="card">
+      <div className="card-h">
+        <span>ENVIRONMENT &amp; PROVENANCE</span>
+        {!status ? <span className="pill idle">resolving…</span> : null}
+      </div>
+
+      <div className="metrics">
+        <Row k="SIC FIELD" v={sic ? 'REAL' : '—'} tone="ok" />
+        <Row k="ARTIFACT" v="routing_sic_2026.npy" />
+        <Row k="DAYS" v={`${meta?.date_range?.[0] ?? '—'} → ${meta?.date_range?.[1] ?? '—'}`} />
+        <Row k="GRID" v={meta ? `${meta.n_rows} × ${meta.n_cols} @ ${meta.resolution_deg}°` : '—'} />
+        <Row k="MEAN SIC (DAY)" v={s ? fmt(s.mean) : '—'} />
+        <Row k="MAX SIC (DAY)" v={s ? fmt(s.max) : '—'} />
+        <Row k="UNCERTAINTY" v={showUncertainty && uncertainty ? `mean ${fmt(uncertainty.stats.mean)} · max ${fmt(uncertainty.stats.max)}` : `${sic?.uncertainty_horizons ?? '—'} horizons available`} />
+        <Row k="OCEAN CURRENTS" v={cmems?.available ? 'AVAILABLE' : 'Unavailable'} tone={cmems?.available ? 'ok' : 'idle'} />
+        <Row k="CVaR" v={cvar?.available ? 'AVAILABLE' : 'Unavailable — iceberg risk scenarios not loaded'} tone={cvar?.available ? 'ok' : 'idle'} />
+        <Row k="ROUTE ML POLICY" v={policy?.present ? 'experimental — synthetic training data' : 'absent'} tone="idle" />
+      </div>
+
+      <div className="prov">
+        <div className="prov-h">HOW THIS ROUTE WAS PRODUCED</div>
+        <ol>
+          <li>SIC field: 3-seed ConvLSTM ensemble, real 2026 forecast, {sic?.date_range?.join(' → ') ?? ''}.</li>
+          <li>NaN cells are <b>non-navigable</b> — never zero-filled, never routed.</li>
+          <li>Cost per cell = SIC + movement distance; movement is 8-connected.</li>
+          <li>A* searches that cost surface; the result is re-validated before it is returned.</li>
+        </ol>
+        <div className="prov-h">NOT USED FOR THIS ROUTE</div>
+        <ul>
+          <li>Route ML policy ({policy?.path ?? 'outputs/ml/route_policy.pt'}) — trained on synthetic 20×25 smoke data, out-of-distribution for the real {meta?.n_rows}×{meta?.n_cols} grid.</li>
+          <li>Live ConvLSTM inference — the raw multi-channel 2026 inputs are absent, so the committed forecast output is used instead.</li>
+          <li>Currents / CVaR — no data configured; nothing is faked.</li>
+        </ul>
+        {ens && ens.inference_rerun_possible === false ? (
+          <div className="prov-warn">{ens.label}</div>
+        ) : null}
+      </div>
+    </div>
+  )
 }

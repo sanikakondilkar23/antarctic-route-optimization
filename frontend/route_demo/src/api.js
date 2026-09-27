@@ -56,6 +56,65 @@ export const fetchRoute = () => getJSON('/api/route')
 
 export const fetchRouteAt = (timestep) => getJSON(`/api/route/at/${timestep}`)
 
+/**
+ * THE route-planning call.
+ *
+ * POST /api/route/optimize — the backend resolves the coordinates onto the
+ * 0.25 deg routing grid, builds the EnvironmentalGrid from the REAL SIC field
+ * for that timestep, and runs A* + CostMap on it. Nothing is computed here.
+ *
+ * A 400 carries a machine-readable `reason` (out_of_grid,
+ * endpoint_not_navigable, no_route, unsafe_route_cells, ...) and is thrown as
+ * an Error with `.payload` so the UI can explain the rejection instead of
+ * showing a route.
+ */
+export async function optimizeRoute({
+  start_lat, start_lon, goal_lat, goal_lon, timestep, snap = true,
+} = {}) {
+  const res = await fetch('/api/route/optimize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      start_lat: Number(start_lat),
+      start_lon: Number(start_lon),
+      goal_lat: Number(goal_lat),
+      goal_lon: Number(goal_lon),
+      timestep: Number(timestep),
+      snap,
+    }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.success === false) {
+    const err = new Error(body.error || `optimize failed (HTTP ${res.status})`)
+    err.reason = body.reason || 'request_failed'
+    err.payload = body
+    throw err
+  }
+  return body
+}
+
+/**
+ * POST /api/route/reroute — re-optimize the SAME leg on a later real SIC
+ * timestep. Endpoints come from the original plan unless overridden, so the
+ * only variable is the environment. Returns both routes, the comparison and
+ * the real changed segments.
+ */
+export async function rerouteRoute({ original_route, new_timestep, start, goal } = {}) {
+  const res = await fetch('/api/route/reroute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ original_route, new_timestep: Number(new_timestep), start, goal }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.success === false) {
+    const err = new Error(body.error || `reroute failed (HTTP ${res.status})`)
+    err.reason = body.reason || 'request_failed'
+    err.payload = body
+    throw err
+  }
+  return body
+}
+
 /** Real SIC encountered along the real A* route, one sample per waypoint. */
 export const fetchRouteProfile = (timestep) =>
   getJSON(`/api/route/profile/${timestep}`)

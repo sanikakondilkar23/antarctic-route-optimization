@@ -19,13 +19,16 @@ Endpoints
     GET /api/sic/<timestep>[?format=b64|array]
     GET /api/route
     GET /api/route/at/<timestep>
+    POST /api/route/optimize          {start_lat,start_lon,goal_lat,goal_lon,
+                                      timestep[,snap,max_snap_cells]}
+    POST /api/route/reroute           {original_route, new_timestep[,start,goal]}
     GET /api/route/profile/<timestep>
     GET /api/uncertainty/<timestep>[?horizon=0..2]
     GET /api/uncertainty/summary
     GET /api/models/ensemble
     GET /api/reroute/<timestep>[?origin_timestep=0]
     GET /api/limitations
-    GET /                     built React app (frontend/route_demo/dist)
+    GET /                         built React app (frontend/route_demo/dist)
 
 NaN encoding
 ------------
@@ -264,6 +267,515 @@ def plan_route(t: int, start_row: int, start_col: int,
         "expanded_nodes": int(result.expanded_nodes),
         "path": path,
         **stats,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Interactive route planning: geographic input + hard safety validation
+#
+# Every rule below is a REJECTION rule.  No NaN is ever zero-filled, no
+# non-navigable cell is ever routed through, and nothing is silently snapped:
+# when an endpoint sits on a non-navigable cell the caller is told exactly
+# what happened (``snapped`` + ``snap_radius_cells``) or the request is
+# refused with HTTP 400.
+# ---------------------------------------------------------------------------
+
+class RouteRequestError(ValueError):
+    """Invalid or unsafe route request -> HTTP 400, never a fabricated route."""
+
+    def __init__(self, message: str, reason: str, **detail: Any):
+        super().__init__(message)
+        self.reason = reason
+        self.detail = detail
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {"success": False, "error": str(self), "reason": self.reason,
+                **self.detail}
+
+
+#: How far (in cells, Chebyshev) an endpoint may be moved onto a navigable
+#: cell when ``snap`` is requested.  3 cells = 0.75 deg, and the snap is
+#: always reported back to the caller.
+MAX_SNAP_CELLS = 3
+
+
+def _nearest_navigable(grid, rc: Tuple[int, int],
+                       max_radius: int) -> Tuple[Optional[Tuple[int, int]], int]:
+    """Nearest navigable cell to ``rc`` within ``max_radius`` (8-connected)."""
+    r0, c0 = rc
+    for radius in range(0, max_radius + 1):
+        best: Optional[Tuple[int, int, int]] = None
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                if max(abs(dr), abs(dc)) != radius:
+                    continue
+                r, c = r0 + dr, c0 + dc
+                if 0 <= r < grid.n_rows and 0 <= c < grid.n_cols \
+                        and bool(grid.navigable[r, c]):
+                    d2 = dr * dr + dc * dc
+                    if best is None or d2 < best[0]:
+                        best = (d2, r, c)
+        if best is not None:
+            return (best[1], best[2]), radius
+    return None, -1
+
+
+def resolve_endpoint(label: str, lat: Any, lon: Any, grid,
+                     allow_snap: bool,
+                     max_snap_cells: int) -> Dict[str, Any]:
+    """
+    Geographic coordinate -> validated (row, col) on the routing grid.
+
+    Bounds validation is delegated to ``SICForecastField.latlon_to_rc``,
+    which already refuses any coordinate with no cell centre within half a
+    cell of the supported grid.
+    """
+    try:
+        lat_f, lon_f = float(lat), float(lon)
+    except (TypeError, ValueError):
+        raise RouteRequestError(
+            f"{label}: lat/lon must be numbers, got lat={lat!r} lon={lon!r}",
+            "invalid_coordinate", endpoint=label)
+    if not (math.isfinite(lat_f) and math.isfinite(lon_f)):
+        raise RouteRequestError(
+            f"{label}: lat/lon must be finite, got lat={lat_f} lon={lon_f}",
+            "invalid_coordinate", endpoint=label)
+
+    f = field()
+    try:
+        rc = f.latlon_to_rc(lat_f, lon_f)
+    except IndexError as exc:
+        raise RouteRequestError(str(exc), "out_of_grid", endpoint=label,
+                                lat=lat_f, lon=lon_f)
+
+    info: Dict[str, Any] = {
+        "requested": {"lat": lat_f, "lon": lon_f},
+        "cell": [int(rc[0]), int(rc[1])],
+        "lat": float(f.rowcol_to_latlon(*rc)[0]),
+        "lon": float(f.rowcol_to_latlon(*rc)[1]),
+        "navigable": bool(grid.navigable[rc]),
+        "snapped": False,
+        "snap_radius_cells": 0,
+    }
+
+    if info["navigable"]:
+        return info
+
+    if not allow_snap:
+        raise RouteRequestError(
+            f"{label} cell {info['cell']} "
+            f"({info['lat']:.2f}, {info['lon']:.2f}) is NON-NAVIGABLE "
+            f"(land / ice shelf / no valid SIC) and snap=false",
+            "endpoint_not_navigable", endpoint=label, **info)
+
+    snapped, radius = _nearest_navigable(grid, rc, max_snap_cells)
+    if snapped is None:
+        raise RouteRequestError(
+            f"{label} cell {info['cell']} "
+            f"({info['lat']:.2f}, {info['lon']:.2f}) is NON-NAVIGABLE and no "
+            f"navigable cell exists within {max_snap_cells} cells "
+            f"({max_snap_cells * 0.25:.2f} deg)",
+            "endpoint_not_navigable", endpoint=label, **info)
+
+    info.update({
+        "cell": [int(snapped[0]), int(snapped[1])],
+        "lat": float(f.rowcol_to_latlon(*snapped)[0]),
+        "lon": float(f.rowcol_to_latlon(*snapped)[1]),
+        "navigable": True,
+        "snapped": True,
+        "snap_radius_cells": int(radius),
+    })
+    return info
+
+
+def path_length_km(path: List[List[int]]) -> float:
+    """Great-circle length of an 8-connected path on the real 0.25 deg grid."""
+    if len(path) < 2:
+        return 0.0
+    lat = np.asarray(np.load(str(CACHE / "routing_lat.npy")), dtype=np.float64)
+    lon = np.asarray(np.load(str(CACHE / "routing_lon.npy")), dtype=np.float64)
+    total = 0.0
+    for (r0, c0), (r1, c1) in zip(path, path[1:]):
+        total += _gc_km(lat[r0], lon[c0], lat[r1], lon[c1])
+    return total
+
+
+def _gc_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    la0, lo0 = math.radians(lat1), math.radians(lon1)
+    la1, lo1 = math.radians(lat2), math.radians(lon2)
+    a = (math.sin((la1 - la0) / 2.0) ** 2
+         + math.cos(la0) * math.cos(la1) * math.sin((lo1 - lo0) / 2.0) ** 2)
+    return 2.0 * 6371.0 * math.asin(math.sqrt(min(1.0, a)))
+
+
+def direct_length_km(start_rc: Tuple[int, int],
+                     goal_rc: Tuple[int, int]) -> float:
+    """Straight-line start-goal great-circle distance, for context."""
+    lat = np.asarray(np.load(str(CACHE / "routing_lat.npy")), dtype=np.float64)
+    lon = np.asarray(np.load(str(CACHE / "routing_lon.npy")), dtype=np.float64)
+    return _gc_km(lat[start_rc[0]], lon[start_rc[1]],
+                  lat[goal_rc[0]], lon[goal_rc[1]])
+
+
+def validate_path(grid, path: List[List[int]], start_rc: Tuple[int, int],
+                  goal_rc: Tuple[int, int]) -> Dict[str, Any]:
+    """
+    Post-route safety validation.  Returns the check report; raises
+    ``RouteRequestError`` if any hard check fails, so a route is only ever
+    returned after it has been proven in-bounds, connected, goal-reaching
+    and free of NaN / non-navigable cells.
+    """
+    n_rows, n_cols = grid.n_rows, grid.n_cols
+    report: Dict[str, Any] = {}
+
+    if not path:
+        raise RouteRequestError(
+            "no route exists between the requested start and goal on this "
+            "SIC field (all connecting cells are non-navigable)",
+            "no_route", start=list(start_rc), goal=list(goal_rc))
+
+    rows = np.array([p[0] for p in path], dtype=np.int64)
+    cols = np.array([p[1] for p in path], dtype=np.int64)
+
+    in_bounds = bool(((rows >= 0) & (rows < n_rows)
+                      & (cols >= 0) & (cols < n_cols)).all())
+    report["all_cells_in_bounds"] = in_bounds
+    if not in_bounds:
+        raise RouteRequestError("route leaves the routing grid", "out_of_grid")
+
+    report["starts_at_start"] = (int(path[0][0]), int(path[0][1])) == tuple(start_rc)
+    report["reaches_goal"] = (int(path[-1][0]), int(path[-1][1])) == tuple(goal_rc)
+    if not report["reaches_goal"]:
+        raise RouteRequestError(
+            f"route does not terminate at the goal cell {list(goal_rc)}",
+            "goal_not_reached", path_end=[int(path[-1][0]), int(path[-1][1])])
+
+    max_step = 0
+    for (r0, c0), (r1, c1) in zip(path, path[1:]):
+        max_step = max(max_step, abs(r1 - r0), abs(c1 - c0))
+    report["max_step_cells"] = int(max_step)
+    report["contiguous_8_connected"] = bool(max_step <= 1)
+    if max_step > 1:
+        raise RouteRequestError(
+            f"route is not 8-connected (largest jump {max_step} cells)",
+            "disconnected_path")
+
+    non_navigable = int((~np.asarray(grid.navigable)[rows, cols]).sum())
+    route_sic = np.asarray(grid.sic_mean, dtype=np.float64)[rows, cols]
+    nan_cells = int(np.isnan(route_sic).sum())
+    report["non_navigable_cells"] = non_navigable
+    report["nan_cells"] = nan_cells
+    if non_navigable or nan_cells:
+        raise RouteRequestError(
+            f"route contains {non_navigable} non-navigable and {nan_cells} NaN "
+            f"cells; refusing to return it (NaN is never zero-filled)",
+            "unsafe_route_cells",
+            non_navigable_cells=non_navigable, nan_cells=nan_cells)
+    return report
+
+
+def changed_segments(orig_path: List[List[int]],
+                     new_path: List[List[int]]) -> List[Dict[str, Any]]:
+    """
+    Contiguous runs of cells that one route uses and the other does not.
+
+    Reported per route, in that route's own path order, so the frontend can
+    draw exactly which stretch of track was abandoned and which stretch was
+    newly taken. Nothing is interpolated: a segment is always a real run of
+    real cells from one of the two returned paths.
+    """
+    orig_cells = {tuple(p) for p in orig_path}
+    new_cells = {tuple(p) for p in new_path}
+
+    def runs(path, other):
+        out: List[Dict[str, Any]] = []
+        run: List[List[int]] = []
+        for cell in path:
+            if tuple(cell) in other:
+                if run:
+                    out.append(run)
+                    run = []
+            else:
+                run.append(cell)
+        if run:
+            out.append(run)
+        return out
+
+    segments: List[Dict[str, Any]] = []
+    for label, path, other in (("original", orig_path, new_cells),
+                               ("updated", new_path, orig_cells)):
+        for run_cells in runs(path, other):
+            first, last = run_cells[0], run_cells[-1]
+            length = 0.0
+            for (r0, c0), (r1, c1) in zip(run_cells, run_cells[1:]):
+                length += math.hypot(r1 - r0, c1 - c0)
+            segments.append({
+                "route": label,
+                "cells": len(run_cells),
+                "from_cell": [int(first[0]), int(first[1])],
+                "to_cell": [int(last[0]), int(last[1])],
+                "length_grid_units": round(length, 3),
+            })
+    return segments
+
+
+def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
+                   timestep: Any, allow_snap: bool = True,
+                   max_snap_cells: int = MAX_SNAP_CELLS) -> Dict[str, Any]:
+    """
+    Full interactive path: geographic request -> validated environmental grid
+    -> A* + CostMap on the REAL SIC field -> validated route.
+
+    Shares ``plan_route`` (and therefore its cache) with the GET endpoints,
+    so there is exactly one routing implementation in the project.
+    """
+    f = field()
+    try:
+        t = int(timestep)
+    except (TypeError, ValueError):
+        raise RouteRequestError(
+            f"timestep must be an integer, got {timestep!r}",
+            "invalid_timestep", timestep=timestep)
+    try:
+        check_timestep(t)
+    except IndexError as exc:
+        raise RouteRequestError(str(exc), "timestep_out_of_range", timestep=t)
+
+    grid = f.load(t_hours=float(t) * 24.0, grid_template=native_grid())
+
+    start = resolve_endpoint("start", start_lat, start_lon, grid,
+                             allow_snap, max_snap_cells)
+    goal = resolve_endpoint("goal", goal_lat, goal_lon, grid,
+                            allow_snap, max_snap_cells)
+    start_rc = (start["cell"][0], start["cell"][1])
+    goal_rc = (goal["cell"][0], goal["cell"][1])
+
+    plan = plan_route(t, start_rc[0], start_rc[1], goal_rc[0], goal_rc[1])
+    if not plan["success"]:
+        raise RouteRequestError(
+            "A* found no route between the requested endpoints on this SIC "
+            "field", "no_route", start=list(start_rc), goal=list(goal_rc))
+
+    path: List[List[int]] = plan["path"]
+    validation = validate_path(grid, path, start_rc, goal_rc)
+
+    spec = f.grid_spec()
+    return {
+        "success": True,
+        "timestep": t,
+        "date": str(f.dates[t])[:10],
+        "start": {"lat": start["lat"], "lon": start["lon"],
+                  "cell": start["cell"], "snapped": start["snapped"],
+                  "snap_radius_cells": start["snap_radius_cells"],
+                  "requested": start["requested"]},
+        "goal": {"lat": goal["lat"], "lon": goal["lon"],
+                 "cell": goal["cell"], "snapped": goal["snapped"],
+                 "snap_radius_cells": goal["snap_radius_cells"],
+                 "requested": goal["requested"]},
+        "path": path,
+        "waypoints": int(plan["waypoints"]),
+        "route_length": float(plan["route_length_grid_units"]),
+        "route_length_units": "grid_cells",
+        "route_length_km": round(path_length_km(path), 2),
+        "route_length_km_note": "great-circle distance summed along the "
+                                "8-connected staircase path; always >= the "
+                                "straight-line start-goal distance",
+        "direct_length_km": round(direct_length_km(start_rc, goal_rc), 2),
+        "mean_sic": plan["mean_sic"],
+        "max_sic": plan["max_sic"],
+        "nan_cells": validation["nan_cells"],
+        "non_navigable_cells": validation["non_navigable_cells"],
+        "total_cost": plan["total_cost"],
+        "expanded_nodes": plan["expanded_nodes"],
+        "validation": validation,
+        "algorithm": "A* + CostMap (src/routing/astar.py, src/routing/cost.py)",
+        "cost_weights": {"w_sic": 1.0, "w_ice": 1.0, "w_wind": 1.0,
+                         "w_curr": 1.0, "w_distance": 1.0},
+        "grid": {"n_rows": spec["n_rows"], "n_cols": spec["n_cols"],
+                 "resolution_deg": spec["resolution_deg"]},
+        "provenance": {
+            "sic_field": "REAL committed 2026 SIC forecast output "
+                         "(backend/cache/routing_sic_2026.npy)",
+            "sic_model": "3-seed ConvLSTM ensemble (backend/runs/"
+                         "final_10ch_3f_seed{0,1,2}/best_model.pt); "
+                         "inference is NOT re-run at request time because the "
+                         "raw 2026 multi-channel inputs are absent",
+            "route": "A* + CostMap on the real SIC field",
+            "nan_policy": "NaN = non-navigable; never zero-filled, never routed",
+            "current_policy": "currents are NOT part of this cost "
+                              "(CMEMS unavailable); no current is faked",
+        },
+        "limitations": LIMITATIONS,
+    }
+
+
+def reroute_route(original: Any, new_timestep: Any,
+                  start: Optional[Any] = None, goal: Optional[Any] = None,
+                  allow_snap: bool = True) -> Dict[str, Any]:
+    """
+    Re-optimize on a LATER real SIC field and report what actually changed.
+
+    The endpoints are taken from ``original`` (or overridden by ``start`` /
+    ``goal``), so the comparison is like-for-like: same leg, new environment.
+    Both plans come from the same ``plan_route`` A* + CostMap call, and both
+    are safety-validated before anything is returned.
+    """
+    f = field()
+    if not isinstance(original, dict):
+        raise RouteRequestError(
+            "original_route must be an object with at least a 'path' array",
+            "invalid_original_route")
+
+    orig_path = original.get("path")
+    if not orig_path or not isinstance(orig_path, list):
+        raise RouteRequestError(
+            "original_route.path is required (use the path returned by "
+            "POST /api/route/optimize)", "invalid_original_route")
+
+    try:
+        nt = int(new_timestep)
+        check_timestep(nt)
+    except (TypeError, ValueError):
+        raise RouteRequestError(
+            f"new_timestep must be an integer, got {new_timestep!r}",
+            "invalid_timestep", new_timestep=new_timestep)
+    except IndexError as exc:
+        raise RouteRequestError(str(exc), "timestep_out_of_range",
+                                new_timestep=nt)
+
+    origin_step = original.get("timestep")
+    origin_step = int(origin_step) if origin_step is not None else 0
+    try:
+        check_timestep(origin_step)
+    except IndexError:
+        origin_step = 0
+
+    if nt < origin_step:
+        raise RouteRequestError(
+            f"new_timestep {nt} is earlier than the original route's timestep "
+            f"{origin_step}; reroute must move forward in the forecast",
+            "timestep_not_forward", original_timestep=origin_step,
+            new_timestep=nt)
+
+    # Endpoints: explicit override > original_route endpoints > its path ends.
+    def endpoint(src, fallback_path_index):
+        if isinstance(src, dict) and "lat" in src and "lon" in src:
+            return float(src["lat"]), float(src["lon"])
+        cell = src.get("cell") if isinstance(src, dict) else None
+        if cell is None:
+            cell = orig_path[fallback_path_index]
+        return f.rowcol_to_latlon(int(cell[0]), int(cell[1]))
+
+    start_latlon = endpoint(start if start is not None else original.get("start"), 0)
+    goal_latlon = endpoint(goal if goal is not None else original.get("goal"), -1)
+
+    grid = f.load(t_hours=float(nt) * 24.0, grid_template=native_grid())
+    s_info = resolve_endpoint("start", start_latlon[0], start_latlon[1], grid,
+                              allow_snap, MAX_SNAP_CELLS)
+    g_info = resolve_endpoint("goal", goal_latlon[0], goal_latlon[1], grid,
+                              allow_snap, MAX_SNAP_CELLS)
+    src = (s_info["cell"][0], s_info["cell"][1])
+    dst = (g_info["cell"][0], g_info["cell"][1])
+
+    new_plan = plan_route(nt, src[0], src[1], dst[0], dst[1])
+    if not new_plan["success"]:
+        raise RouteRequestError(
+            f"no route exists between the same endpoints on the D{nt} SIC "
+            f"field", "no_route", new_timestep=nt)
+
+    new_path: List[List[int]] = new_plan["path"]
+    new_validation = validate_path(grid, new_path, src, dst)
+
+    orig_cells = [[int(r), int(c)] for r, c in orig_path]
+    both = bool(orig_cells and new_path)
+
+    def block(plan_payload, path, validation, s_i, g_i, step):
+        return {
+            "timestep": step,
+            "date": str(f.dates[step])[:10] if 0 <= step < len(f.dates) else None,
+            "success": bool(plan_payload.get("success", True)),
+            "waypoints": len(path),
+            "route_length": plan_payload.get("route_length_grid_units"),
+            "route_length_units": "grid_cells",
+            "route_length_km": round(path_length_km(path), 2),
+            "direct_length_km": round(direct_length_km(src, dst), 2),
+            "mean_sic": plan_payload.get("mean_sic"),
+            "max_sic": plan_payload.get("max_sic"),
+            "nan_cells": validation.get("nan_cells") if validation else None,
+            "non_navigable_cells": validation.get("non_navigable_cells")
+            if validation else None,
+            "total_cost": plan_payload.get("total_cost"),
+            "expanded_nodes": plan_payload.get("expanded_nodes"),
+            "start": s_i,
+            "goal": g_i,
+            "path": path,
+            "validation": validation,
+        }
+
+    original_block = {
+        "timestep": origin_step,
+        "date": str(f.dates[origin_step])[:10],
+        "waypoints": len(orig_cells),
+        "path": orig_cells,
+        "mean_sic": original.get("mean_sic"),
+        "max_sic": original.get("max_sic"),
+        "source": "path supplied by the client (the plan it optimized)",
+    }
+    updated_block = block(new_plan, new_path, new_validation, s_info, g_info, nt)
+
+    comparison = {
+        "identical_path": both and orig_cells == new_path,
+        "jaccard_overlap": float(jaccard_overlap([tuple(p) for p in orig_cells],
+                                                 [tuple(p) for p in new_path]))
+        if both else None,
+        "route_coverage": float(route_coverage([tuple(p) for p in orig_cells],
+                                               [tuple(p) for p in new_path]))
+        if both else None,
+        "changed_cells": len({tuple(p) for p in orig_cells}
+                             ^ {tuple(p) for p in new_path}) if both else None,
+        "waypoints_before": len(orig_cells),
+        "waypoints_after": len(new_path),
+    }
+
+    return {
+        "success": True,
+        "status": "SUCCESS",
+        "origin_timestep": origin_step,
+        "new_timestep": nt,
+        "forecast_step_days": nt - origin_step,
+        "origin_date": original_block["date"],
+        "new_date": updated_block["date"],
+        "start": s_info,
+        "goal": g_info,
+        "original_route": original_block,
+        "updated_route": updated_block,
+        "route_comparison": comparison,
+        "changed_segments": changed_segments(orig_cells, new_path),
+        "metrics": {
+            "original": {k: original_block.get(k) for k in
+                         ("waypoints", "mean_sic", "max_sic", "route_length")},
+            "updated": {k: updated_block.get(k) for k in
+                        ("waypoints", "mean_sic", "max_sic", "route_length",
+                         "total_cost")},
+            "delta": {
+                "mean_sic": (None if original_block.get("mean_sic") is None
+                             or new_plan["mean_sic"] is None
+                             else new_plan["mean_sic"] - original_block["mean_sic"]),
+                "max_sic": (None if original_block.get("max_sic") is None
+                            or new_plan["max_sic"] is None
+                            else new_plan["max_sic"] - original_block["max_sic"]),
+                "length_grid_units": (
+                    None if original_block.get("route_length") is None
+                    else new_plan["route_length_grid_units"]
+                    - original_block["route_length"]),
+            },
+        },
+        "algorithm": "A* + CostMap re-planned on the new real SIC field",
+        "environment_change_note":
+            "The route is recomputed against a different real SIC forecast "
+            "timestep. An unchanged corridor is a real result, not a cached "
+            "one: it means the cost surface did not move the optimum.",
+        "limitations": LIMITATIONS,
     }
 
 
@@ -726,6 +1238,81 @@ def create_app() -> Flask:
             **plan,
         })
 
+    # ---------------- interactive optimization (POST) ----------------
+
+    @app.post("/api/route/optimize")
+    def route_optimize():
+        """
+        Plan a route from geographic coordinates against the real SIC field.
+
+        Body: {start_lat, start_lon, goal_lat, goal_lon, timestep}
+        Optional: {snap: bool = true, max_snap_cells: int = 3}
+
+        Rejects (HTTP 400, never a fabricated route) out-of-grid coordinates,
+        non-finite values, endpoints with no navigable cell in range, and
+        unreachable goals.  A returned route is always proven in-bounds,
+        8-connected, goal-reaching and free of NaN / non-navigable cells.
+        """
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            raise RouteRequestError("request body must be a JSON object",
+                                    "invalid_body")
+
+        missing = [k for k in ("start_lat", "start_lon", "goal_lat",
+                               "goal_lon", "timestep") if body.get(k) is None]
+        if missing:
+            raise RouteRequestError(
+                f"missing required field(s): {', '.join(missing)}",
+                "missing_fields", missing=missing)
+
+        try:
+            max_snap = int(body.get("max_snap_cells", MAX_SNAP_CELLS))
+        except (TypeError, ValueError):
+            raise RouteRequestError("max_snap_cells must be an integer",
+                                    "invalid_snap_radius")
+        if not 0 <= max_snap <= 10:
+            raise RouteRequestError(
+                "max_snap_cells must be between 0 and 10", "invalid_snap_radius")
+
+        snap = body.get("snap", True)
+        if not isinstance(snap, bool):
+            raise RouteRequestError("snap must be a boolean", "invalid_snap")
+
+        return jsonify(optimize_route(
+            start_lat=body["start_lat"], start_lon=body["start_lon"],
+            goal_lat=body["goal_lat"], goal_lon=body["goal_lon"],
+            timestep=body["timestep"], allow_snap=snap, max_snap_cells=max_snap,
+        ))
+
+    @app.post("/api/route/reroute")
+    def route_reroute():
+        """
+        Re-optimize an existing route on a LATER real SIC forecast timestep.
+
+        Body: {original_route: {path, start, goal, timestep, mean_sic, max_sic},
+               new_timestep: int, start?: {...}, goal?: {...}, snap?: bool}
+
+        Returns both routes, a like-for-like comparison and the real changed
+        segments. Endpoints default to the original route's own endpoints, so
+        the only thing that changes is the environment.
+        """
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            raise RouteRequestError("request body must be a JSON object",
+                                    "invalid_body")
+        if body.get("new_timestep") is None:
+            raise RouteRequestError("missing required field: new_timestep",
+                                    "missing_fields",
+                                    missing=["new_timestep"])
+        snap = body.get("snap", True)
+        if not isinstance(snap, bool):
+            raise RouteRequestError("snap must be a boolean", "invalid_snap")
+        return jsonify(reroute_route(
+            original=body.get("original_route"),
+            new_timestep=body["new_timestep"],
+            start=body.get("start"), goal=body.get("goal"), allow_snap=snap,
+        ))
+
     # ---------------- dynamic rerouting ----------------
 
     @app.get("/api/reroute/<int:timestep>")
@@ -1005,6 +1592,7 @@ def create_app() -> Flask:
             "endpoints": ["/api/health", "/api/sic/metadata",
                           "/api/sic/<timestep>", "/api/route",
                           "/api/route/at/<timestep>",
+                          "POST /api/route/optimize",
                           "/api/route/profile/<timestep>",
                           "/api/uncertainty/<timestep>?horizon=0..2",
                           "/api/uncertainty/summary",
@@ -1027,6 +1615,10 @@ def create_app() -> Flask:
     @app.errorhandler(IndexError)
     def bad_index(exc):
         return jsonify({"error": str(exc)}), 404
+
+    @app.errorhandler(RouteRequestError)
+    def bad_route_request(exc):
+        return jsonify(exc.to_payload()), 400
 
     @app.errorhandler(FileNotFoundError)
     def missing_file(exc):

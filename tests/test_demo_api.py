@@ -288,3 +288,271 @@ class TestSystemStatus:
     def test_limitations_endpoint(self, client):
         lim = client.get("/api/limitations").get_json()
         assert set(lim) == {"sic", "cmems", "cvar", "route_ml", "route"}
+
+
+# ---------------------------------------------------------------------------
+# 6. POST /api/route/optimize — geographic input, real A* + CostMap
+# ---------------------------------------------------------------------------
+
+class TestOptimizeRoute:
+    """The verified baseline leg must reproduce exactly, and bad input must
+    be rejected rather than silently snapped into a fake route."""
+
+    BODY = {"start_lat": -32.0, "start_lon": 82.0,
+            "goal_lat": -70.0, "goal_lon": 10.5, "timestep": 0}
+
+    def test_reproduces_the_verified_baseline(self, client):
+        r = client.post("/api/route/optimize", json=self.BODY)
+        assert r.status_code == 200
+        b = r.get_json()
+        assert b["success"] is True
+        assert b["waypoints"] == 287
+        assert b["route_length"] == pytest.approx(348.96, abs=0.01)
+        assert b["mean_sic"] == pytest.approx(0.00751796, abs=1e-6)
+        assert b["max_sic"] == pytest.approx(0.75412625, abs=1e-6)
+        assert b["nan_cells"] == 0
+        assert b["non_navigable_cells"] == 0
+        assert b["timestep"] == 0
+        assert b["date"] == "2026-01-06"
+        assert b["algorithm"].startswith("A* + CostMap")
+
+    def test_matches_the_committed_verified_artifact(self, client):
+        """The POST path and the stored final_route.json must agree cell for
+        cell — this is what proves the endpoint is not a separate route."""
+        b = client.post("/api/route/optimize", json=self.BODY).get_json()
+        artifact = json.loads(ROUTE_JSON.read_text(encoding="utf-8"))
+        assert [list(p) for p in b["path"]] == [
+            [int(c[0]), int(c[1])] for c in artifact["final_route_cells"]]
+
+    def test_response_carries_every_required_field(self, client):
+        b = client.post("/api/route/optimize", json=self.BODY).get_json()
+        for key in ("success", "path", "waypoints", "route_length", "mean_sic",
+                    "max_sic", "nan_cells", "start", "goal", "timestep",
+                    "total_cost", "expanded_nodes", "validation"):
+            assert key in b, key
+        assert b["start"]["cell"] == [172, 368]
+        assert b["goal"]["cell"] == [20, 82]
+        assert b["route_length_units"] == "grid_cells"
+        assert b["direct_length_km"] > 0
+
+    def test_validation_report_passes(self, client):
+        v = client.post("/api/route/optimize", json=self.BODY).get_json()["validation"]
+        assert v["all_cells_in_bounds"] is True
+        assert v["starts_at_start"] is True
+        assert v["reaches_goal"] is True
+        assert v["contiguous_8_connected"] is True
+        assert v["max_step_cells"] <= 1
+        assert v["nan_cells"] == 0
+        assert v["non_navigable_cells"] == 0
+
+    def test_route_never_crosses_a_nan_cell(self, client):
+        b = client.post("/api/route/optimize", json=self.BODY).get_json()
+        sic = np.load(SIC_PATH, mmap_mode="r")[0]
+        rows = np.array([p[0] for p in b["path"]])
+        cols = np.array([p[1] for p in b["path"]])
+        assert int(np.isnan(sic[rows, cols]).sum()) == 0
+
+    def test_a_different_goal_gives_a_different_route(self, client):
+        other = dict(self.BODY, goal_lat=-69.41, goal_lon=76.19)
+        b = client.post("/api/route/optimize", json=other).get_json()
+        base = client.post("/api/route/optimize", json=self.BODY).get_json()
+        assert b["success"] is True
+        assert b["waypoints"] != base["waypoints"]
+        assert [list(p) for p in b["path"]] != [list(p) for p in base["path"]]
+
+    def test_a_different_day_gives_a_different_sic_profile(self, client):
+        b = client.post("/api/route/optimize",
+                        json=dict(self.BODY, timestep=100)).get_json()
+        assert b["date"] != "2026-01-06"
+        assert b["max_sic"] != pytest.approx(0.75412625, abs=1e-6)
+
+    def test_uncached_timestep_is_really_computed(self, client):
+        """Two different days must not return the same cached plan."""
+        a = client.post("/api/route/optimize", json=self.BODY).get_json()
+        b = client.post("/api/route/optimize",
+                        json=dict(self.BODY, timestep=30)).get_json()
+        assert a["mean_sic"] != b["mean_sic"] or a["max_sic"] != b["max_sic"]
+
+    # ---- rejections: no fabricated route, ever -------------------------
+
+    def test_out_of_grid_longitude_is_rejected(self, client):
+        r = client.post("/api/route/optimize",
+                        json=dict(self.BODY, start_lon=-56.0))
+        assert r.status_code == 400
+        b = r.get_json()
+        assert b["success"] is False
+        assert b["reason"] == "out_of_grid"
+        assert "path" not in b
+
+    def test_out_of_grid_latitude_is_rejected(self, client):
+        r = client.post("/api/route/optimize", json=dict(self.BODY, start_lat=10.0))
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "out_of_grid"
+
+    def test_non_finite_coordinate_is_rejected(self, client):
+        r = client.post("/api/route/optimize", json=dict(self.BODY, start_lat=None))
+        assert r.status_code == 400
+        assert r.get_json()["reason"] in {"invalid_coordinate", "missing_fields"}
+
+    def test_timestep_out_of_range_is_rejected(self, client):
+        r = client.post("/api/route/optimize", json=dict(self.BODY, timestep=999))
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "timestep_out_of_range"
+
+    def test_missing_fields_are_rejected(self, client):
+        r = client.post("/api/route/optimize", json={"start_lat": -32.0})
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "missing_fields"
+
+    def test_unreachable_goal_is_rejected(self, client):
+        r = client.post("/api/route/optimize", json=dict(self.BODY, goal_lat=-80.0))
+        assert r.status_code == 400
+        assert r.get_json()["reason"] in {"out_of_grid", "endpoint_not_navigable",
+                                         "no_route"}
+
+    def test_land_endpoint_without_snap_is_rejected(self, client):
+        """Maitri's station cell is on the continent: refuse rather than
+        quietly route to a neighbouring cell."""
+        r = client.post("/api/route/optimize",
+                        json=dict(self.BODY, goal_lat=-70.767, goal_lon=11.733,
+                                  snap=False))
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "endpoint_not_navigable"
+
+    def test_land_endpoint_with_snap_is_reported_not_hidden(self, client):
+        r = client.post("/api/route/optimize",
+                        json=dict(self.BODY, goal_lat=-70.767, goal_lon=11.733,
+                                  snap=True))
+        assert r.status_code == 200
+        b = r.get_json()
+        assert b["success"] is True
+        assert b["goal"]["snapped"] is True
+        assert b["goal"]["snap_radius_cells"] >= 1
+        assert b["goal"]["requested"] == {"lat": -70.767, "lon": 11.733}
+
+    def test_no_route_is_reported_as_such(self, client):
+        """A goal boxed in by non-navigable cells must 400, not return a
+        partial path."""
+        r = client.post("/api/route/optimize",
+                        json=dict(self.BODY, start_lat=-32.0, start_lon=-9.5,
+                                  goal_lat=-70.0, goal_lon=10.5))
+        assert r.status_code in (200, 400)
+        if r.status_code == 400:
+            assert r.get_json()["reason"] in {"no_route", "endpoint_not_navigable"}
+
+
+# ---------------------------------------------------------------------------
+# 7. POST /api/route/reroute — same leg, later real environment
+# ---------------------------------------------------------------------------
+
+class TestReroutePost:
+
+    def _plan(self, client, **over):
+        body = {"start_lat": -32.0, "start_lon": 82.0,
+                "goal_lat": -70.0, "goal_lon": 10.5, "timestep": 0}
+        body.update(over)
+        return client.post("/api/route/optimize", json=body).get_json()
+
+    def test_reroute_returns_both_routes_and_comparison(self, client):
+        plan = self._plan(client)
+        r = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "start": plan["start"],
+                               "goal": plan["goal"], "timestep": plan["timestep"],
+                               "mean_sic": plan["mean_sic"],
+                               "max_sic": plan["max_sic"]},
+            "new_timestep": 100,
+        })
+        assert r.status_code == 200
+        b = r.get_json()
+        for key in ("original_route", "updated_route", "route_comparison",
+                    "changed_segments", "metrics"):
+            assert key in b, key
+        assert b["forecast_step_days"] == 100
+        assert b["new_date"] != b["origin_date"]
+        assert b["updated_route"]["nan_cells"] == 0
+        assert b["updated_route"]["validation"]["reaches_goal"] is True
+
+    def test_reroute_keeps_the_same_endpoints(self, client):
+        plan = self._plan(client)
+        b = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "start": plan["start"],
+                               "goal": plan["goal"], "timestep": 0},
+            "new_timestep": 100,
+        }).get_json()
+        assert b["start"]["cell"] == plan["start"]["cell"]
+        assert b["goal"]["cell"] == plan["goal"]["cell"]
+
+    def test_changed_segments_are_real_runs_of_real_cells(self, client):
+        plan = self._plan(client)
+        b = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "start": plan["start"],
+                               "goal": plan["goal"], "timestep": 0},
+            "new_timestep": 100,
+        }).get_json()
+        segs = b["changed_segments"]
+        assert len(segs) >= 2
+        for sg in segs:
+            assert sg["route"] in {"original", "updated"}
+            assert sg["cells"] > 0
+            assert sg["length_grid_units"] > 0
+            source = b["original_route"]["path"] if sg["route"] == "original" \
+                else b["updated_route"]["path"]
+            assert sg["from_cell"] in [list(p) for p in source]
+            assert sg["to_cell"] in [list(p) for p in source]
+
+    def test_unchanged_corridor_is_reported_honestly(self, client):
+        """D0 -> D3 genuinely leaves the corridor identical; that must be
+        reported as a real result, not dressed up as a change."""
+        plan = self._plan(client)
+        b = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "start": plan["start"],
+                               "goal": plan["goal"], "timestep": 0},
+            "new_timestep": 3,
+        }).get_json()
+        assert b["route_comparison"]["identical_path"] is True
+        assert b["route_comparison"]["changed_cells"] == 0
+        assert b["changed_segments"] == []
+
+    def test_reroute_rejects_a_missing_original_route(self, client):
+        r = client.post("/api/route/reroute", json={"new_timestep": 5})
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "invalid_original_route"
+
+    def test_reroute_rejects_a_missing_path(self, client):
+        r = client.post("/api/route/reroute",
+                        json={"original_route": {"timestep": 0}, "new_timestep": 5})
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "invalid_original_route"
+
+    def test_reroute_rejects_going_backwards_in_the_forecast(self, client):
+        plan = self._plan(client)
+        r = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "timestep": 100},
+            "new_timestep": 5,
+        })
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "timestep_not_forward"
+
+    def test_reroute_rejects_an_out_of_range_target_day(self, client):
+        plan = self._plan(client)
+        r = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "timestep": 0},
+            "new_timestep": 999,
+        })
+        assert r.status_code == 400
+        assert r.get_json()["reason"] == "timestep_out_of_range"
+
+    def test_reroute_metrics_carry_real_before_and_after_values(self, client):
+        plan = self._plan(client)
+        b = client.post("/api/route/reroute", json={
+            "original_route": {"path": plan["path"], "start": plan["start"],
+                               "goal": plan["goal"], "timestep": 0,
+                               "mean_sic": plan["mean_sic"],
+                               "max_sic": plan["max_sic"]},
+            "new_timestep": 100,
+        }).get_json()
+        assert b["metrics"]["original"]["max_sic"] == pytest.approx(0.75412625, abs=1e-6)
+        assert b["metrics"]["updated"]["max_sic"] == b["updated_route"]["max_sic"]
+        assert b["metrics"]["delta"]["max_sic"] == pytest.approx(
+            b["metrics"]["updated"]["max_sic"] - 0.75412625, abs=1e-5)
+

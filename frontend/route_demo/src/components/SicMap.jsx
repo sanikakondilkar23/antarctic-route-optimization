@@ -39,6 +39,9 @@ export default function SicMap({
   corridorUnchanged = false,
   statusChip = null,
   onHoverCell,
+  onPickCell,
+  pickMode = null,
+  selection = null,
   hud,
 }) {
   const canvasRef = useRef(null)
@@ -332,7 +335,15 @@ export default function SicMap({
       ctx.fillText('model domain limit  -49.75\u00b0', x0 + 5, y(mb) - 3)
     }
 
-    if (!routeVisible || !layers.route) return
+    if (!routeVisible || !layers.route) {
+      // No route yet: still draw the operator's pending start / destination so
+      // the selection is visible on the chart before anything is optimized.
+      if (selection) {
+        drawSelection(ctx, x, y, selection,
+          Math.max(1, Math.min(1.6, size.w / 1100)), geo)
+      }
+      return
+    }
 
     const toXY = (path) => path.map(([r, c]) => [x(lon[c]), y(lat[r])])
     const stroke = (pts, color, width, dash) => {
@@ -518,22 +529,32 @@ export default function SicMap({
     }
   }, [fieldCanvas, hatchCanvas, geo, lon, lat, primaryRoute, originRoute, changedCells,
       routeVisible, pulseT, vesselT, size, corridorUnchanged, statusChip,
-      renderMode, uncertainty, uncMax, diff, layers])
+      renderMode, uncertainty, uncMax, diff, layers, selection])
 
   useEffect(() => { draw() }, [draw])
 
-  const handleMove = (ev) => {
+  /** Pixel -> grid cell, or null when the pointer is off the plate. */
+  const cellAt = (ev) => {
     const canvas = canvasRef.current
-    if (!canvas || !slice) return
+    if (!canvas || !slice) return null
     const r = canvas.getBoundingClientRect()
     const px = ev.clientX - r.left
     const py = ev.clientY - r.top
     const { x0, y0, w, h } = geo
-    if (px < x0 || px > x0 + w || py < y0 || py > y0 + h) { setHover(null); if (onHoverCell) onHoverCell(null); return }
+    if (px < x0 || px > x0 + w || py < y0 || py > y0 + h) return null
     const c = Math.min(slice.nCols - 1, Math.max(0, Math.floor(((px - x0) / w) * slice.nCols)))
     const rIdx = Math.min(slice.nRows - 1, Math.max(0, Math.floor((1 - (py - y0) / h) * slice.nRows)))
+    return { row: rIdx, col: c }
+  }
+
+  const handleMove = (ev) => {
+    const cell = cellAt(ev)
+    if (!cell || !slice) { setHover(null); if (onHoverCell) onHoverCell(null); return }
+    const { row: rIdx, col: c } = cell
     const i = rIdx * slice.nCols + c
     const isValid = !!slice.valid[i]
+    const canvas = canvasRef.current
+    const rect = canvas.getBoundingClientRect()
     const info = {
       lat: lat[rIdx], lon: lon[c], row: rIdx, col: c,
       valid: isValid,
@@ -541,8 +562,25 @@ export default function SicMap({
       unc: uncertainty && uncertainty.valid[i] ? uncertainty.values[i] / 255 : null,
       inModelBand: rIdx < 101 && c < 361,
     }
-    setHover({ ...info, tx: px, ty: py })
+    setHover({ ...info, tx: ev.clientX - rect.left, ty: ev.clientY - rect.top })
     if (onHoverCell) onHoverCell(info)
+  }
+
+  /**
+   * Click-to-place. The cell is handed to the parent as grid indices; the
+   * parent turns it into lat/lon and the BACKEND decides whether that cell is
+   * an acceptable endpoint. The chart never decides navigability itself.
+   */
+  const handleClick = (ev) => {
+    if (!onPickCell || !pickMode) return
+    const cell = cellAt(ev)
+    if (!cell) return
+    onPickCell({
+      ...cell,
+      lat: lat[cell.row],
+      lon: lon[cell.col],
+      valid: !!slice.valid[cell.row * slice.nCols + cell.col],
+    })
   }
 
   return (
@@ -550,9 +588,14 @@ export default function SicMap({
       <div ref={wrapRef} style={{ position: 'absolute', inset: 0 }}>
         <canvas
           ref={canvasRef}
-          style={{ width: size.w, height: size.h }}
+          style={{
+            width: size.w,
+            height: size.h,
+            cursor: pickMode ? 'crosshair' : 'default',
+          }}
           onMouseMove={handleMove}
           onMouseLeave={() => { setHover(null); if (onHoverCell) onHoverCell(null) }}
+          onClick={handleClick}
         />
       </div>
 
@@ -656,8 +699,53 @@ export default function SicMap({
   )
 }
 
-function drawStar(ctx, cx, cy, r, color) {
-  ctx.save()
+/**
+ * Pending start / destination, drawn before a route exists.
+ *
+ * These are operator selections, not results: they are shown as hollow rings
+ * with a dashed link so it is obvious no route has been computed between them
+ * yet. Non-navigable cells are ringed in red — a warning, not a rejection;
+ * the backend still has the final say when the route is requested.
+ */
+function drawSelection(ctx, x, y, selection, scale, geo) {
+  const ring = (cell, color, label) => {
+    if (!cell) return
+    const px = x(selection.lon[cell.col])
+    const py = y(selection.lat[cell.row])
+    ctx.save()
+    ctx.beginPath(); ctx.arc(px, py, 15 * scale, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(4,9,16,0.6)'; ctx.fill()
+    ctx.setLineDash([5, 4])
+    ctx.lineWidth = 2.2; ctx.strokeStyle = color; ctx.stroke()
+    ctx.setLineDash([])
+    ctx.beginPath(); ctx.arc(px, py, 5 * scale, 0, Math.PI * 2)
+    ctx.fillStyle = color; ctx.fill()
+    ctx.font = 'bold 11px ui-sans-serif, system-ui, sans-serif'
+    ctx.textBaseline = 'bottom'
+    const leftEdge = px - 60 < geo.x0
+    ctx.textAlign = leftEdge ? 'left' : 'right'
+    ctx.fillStyle = color
+    ctx.fillText(label, px + (leftEdge ? 20 : -20), py - 8)
+    ctx.restore()
+  }
+  const a = selection.start
+  const b = selection.goal
+  if (a && b) {
+    ctx.save()
+    ctx.setLineDash([4, 5])
+    ctx.lineWidth = 1.4
+    ctx.strokeStyle = 'rgba(226,240,255,0.5)'
+    ctx.beginPath()
+    ctx.moveTo(x(selection.lon[a.col]), y(selection.lat[a.row]))
+    ctx.lineTo(x(selection.lon[b.col]), y(selection.lat[b.row]))
+    ctx.stroke()
+    ctx.restore()
+  }
+  ring(a, a && a.navigable === false ? '#f87171' : '#34d399', 'START')
+  ring(b, b && b.navigable === false ? '#f87171' : '#fbbf24', 'DEST')
+}
+
+function drawStar(ctx, cx, cy, r, color) {  ctx.save()
   ctx.beginPath()
   for (let k = 0; k < 10; k++) {
     const rad = k % 2 === 0 ? r : r * 0.45
