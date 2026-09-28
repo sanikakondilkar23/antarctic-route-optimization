@@ -1,8 +1,36 @@
-# PolarPath SIC Forecaster
+# AURORA — Antarctic Unified Routing & Operational Risk Analytics
 
-A ConvLSTM ensemble for short-term Antarctic sea-ice concentration (SIC) forecasting in the Bharati–Maitri corridor of the Southern Ocean, built for NCPOR resupply-vessel route planning. The model ingests 5 days of satellite, atmospheric, and ocean data and predicts SIC at three horizons (day-1, day-2, day-3) over the Indian Ocean sector (10°W–80°E, 75°S–50°S) on a 0.25° regular grid. A three-seed ensemble with MC-Dropout quantifies uncertainty, which is converted into conformal 90% intervals calibrated once on 2025 and applied unchanged to the held-out 2026 test window.
+**AURORA** is the umbrella product. This repository is its **route-optimization** codebase, and it
+also ships the sea-ice-concentration (SIC) forecaster that feeds the router.
+
+| AURORA component | Lives in | Status (verified 2026-09-28) |
+|---|---|---|
+| SIC forecasting | `backend/src`, `backend/scripts` (PolarPath ConvLSTM, 3-seed ensemble) | **Trained.** Checkpoints committed: `backend/runs/final_10ch_3f_seed{0,1,2}/best_model.pt` (1,083,833 B each) |
+| Route optimization | `src/routing`, `src/ml/dynamic_reroute.py`, `backend/api/main.py` | **Implemented.** `POST /api/route/optimize`, `POST /api/route/reroute`, `GET /api/route`, safety/path validation included |
+| SAR iceberg detection | separate repo `sakshidas1-ux/sar-iceberg-detection` | **PENDING / SEPARATE REPOSITORY** — no iceberg detections are produced from this repo |
+
+Verified facts:
+
+- `SIC MODEL IMPORT: PASS` — `sys.path.insert(0,'backend/src'); from model import ConvLSTMForecaster`
+- `TEST DATASET IMPORT: PASS` — `from test_dataset import TestDataset`
+- `python -m pytest tests/ -q` → **284 passed**
+- Iceberg hook in this repo: `src/data/adapters.py::IcebergAdapter` (expects a caller-supplied
+  risk field in [0,1]) and `GET /api/layers/status` reports `available: false`.
+  `backend/cache/routing_metadata.json` marks `iceberg_standoff: "deferred - no trajectory
+  predictor yet"`. The iceberg model itself lives in the separate repository above.
+
+Known blocker (data, not code):
+
+- `python backend/scripts/inference_2026.py` loads the ConvLSTM ensemble successfully but cannot
+  run because `backend/data/test_2026/processed/sic.npy` (and the other forcing inputs) are absent
+  on this machine. These files are **not** fabricated or generated; the run stays blocked until the
+  real data is restored.
+
+The rest of this document describes the SIC forecaster itself.
 
 ## Overview
+
+A ConvLSTM ensemble for short-term Antarctic sea-ice concentration (SIC) forecasting in the Bharati–Maitri corridor of the Southern Ocean, built for NCPOR resupply-vessel route planning. The model ingests 5 days of satellite, atmospheric, and ocean data and predicts SIC at three horizons (day-1, day-2, day-3) over the Indian Ocean sector (10°W–80°E, 75°S–50°S) on a 0.25° regular grid. A three-seed ensemble with MC-Dropout quantifies uncertainty, which is converted into conformal 90% intervals calibrated once on 2025 and applied unchanged to the held-out 2026 test window.
 
 The forecaster combines three public data sources — NSIDC CDR v6 satellite SIC, ERA5 atmospheric reanalysis, and CMEMS GLORYS12V1 ocean reanalysis — into a common 0.25° grid. It was trained on 2021–2024 (1,461 days), validated on 2025, and tested on an entirely held-out 2026 window (Jan 1 – Jun 23). The reference metric is the ratio of model MIZ RMSE to persistence MIZ RMSE; on day-1 that ratio is **0.69 in both the 2025 validation and the 2026 test years**, i.e. the model is ~31% better than persistence on day-1 and the skill transfers across years.
 
@@ -337,8 +365,12 @@ The NOAA-20 VIIRS product provides SIC at ~750 m — the resolution a routing pr
 **Iceberg drift model (out of scope).** *historical record*
 The original problem statement mentions iceberg trajectory prediction. A physics-informed drift model would be a separate sub-project (historical tracks, force balance, residual-ML corrector) and was not built. Adding it would also change the model's output contract (currently B·3·H·W SIC only) and its evaluation.
 
-**Route optimization (out of scope).** *historical record*
+**Route optimization (out of scope).** *historical record — superseded*
 No NSGA-III, A*, or cost layer. The SIC forecast is the upstream input such a routing layer would consume; nothing in `src` or `scripts` emits a recommended trajectory or consumes a cost layer. The routing layer itself is not part of this submission.
+
+> **Update:** this note described the earlier SIC-only submission. Route optimization *is* now
+> implemented in this repository (`src/routing/`, `src/ml/dynamic_reroute.py`,
+> `backend/api/main.py`), and the SIC ensemble is its input — see the status table at the top.
 
 **ERA5 latency simulation (not implemented).**
 In deployment ERA5 lags real time by ~5 days; training uses observed ERA5 aligned to input days — standard supervised practice but not operationally reproducible as-is. Simulating the gap by shifting ERA5 inputs and retraining is documented (see Limitations) but was not done.
