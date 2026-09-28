@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-abyssal text-white font-sans antialiased selection:bg-mint/30 selection:text-white;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-abyssal-card/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-card relative transition-all duration-200;
+  }
+  .card-hover {
+    @apply hover:border-mint/40 hover:shadow-glow hover:-translate-y-0.5;
+  }
+  .card-tactical {
+    @apply bg-abyssal-card/90 backdrop-blur-2xl border border-white/15 rounded-2xl shadow-2xl relative;
+  }
+  .input {
+    @apply w-full rounded-xl bg-abyssal-deck/90 border border-white/15 px-4 py-2.5 text-sm text-white placeholder-mist/40 outline-none transition focus:border-mint/60 focus:bg-abyssal-deck focus:ring-1 focus:ring-mint/20;
+  }
+  .input-label {
+    @apply block text-xs font-semibold uppercase tracking-wider text-mist mb-1.5;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-mint to-mint-glow px-5 py-2.5 text-sm font-bold text-abyssal transition hover:brightness-110 hover:shadow-glow focus:outline-none focus:ring-2 focus:ring-mint/50 disabled:opacity-50;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10 hover:border-white/25 focus:outline-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium text-mist transition hover:text-white hover:bg-white/5 focus:outline-none;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-mist;
+  }
+  .section-title {
+    @apply text-sm font-bold uppercase tracking-wider text-white/90;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-medium text-mist transition hover:bg-white/5 hover:text-white;
+  }
+  .nav-item-active {
+    @apply flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-bold text-mint bg-mint/10 border border-mint/30 shadow-sm;
+  }
+  .th {
+    @apply text-left text-[10px] font-bold uppercase tracking-[0.15em] text-mist/70 px-4 py-3 border-b border-white/10;
+  }
+  .td {
+    @apply px-4 py-3 text-xs text-white/85;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(0, 242, 195, 0.2);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 242, 195, 0.4);
+  }
+}
+
+/* Leaflet dark polar theme overrides */
+.leaflet-container {
+  background: #04070D !important;
+  font-family: inherit;
+}
+.leaflet-control-zoom a {
+  background: #0D1424 !important;
+  color: #00F2C3 !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: #131E34 !important;
+  color: #ffffff !important;
+}
+.leaflet-control-zoom {
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+  border: none !important;
+}
+.leaflet-control-attribution {
+  background: rgba(8, 12, 20, 0.85) !important;
+  color: #64748b !important;
+  font-size: 9px !important;
+}
+.leaflet-control-attribution a {
+  color: #00F2C3 !important;
+}
+.leaflet-popup-content-wrapper {
+  background: #0D1424 !important;
+  color: #fff !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(0, 242, 195, 0.3) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8) !important;
+}
+.leaflet-popup-tip {
+  background: #0D1424 !important;
+}
+.leaflet-popup-content {
+  margin: 12px 14px !important;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
