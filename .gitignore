@@ -77,3 +77,12 @@ backend/plots/route_validation_5b.png
 frontend/aurora/dist/
 frontend/aurora/.env.local
 
+
+# AURORA iceberg component: the single verified YOLOv8 checkpoint imported
+# from sakshidas1-ux/sar-iceberg-detection (feature/aurora-iceberg-model),
+# SHA256 75e153cb3e3754c4ff47318ec9f160bfe39b8933455db0b4f7d01b46e55af461.
+# Exception to the *.pt rule above; the file is 6.2 MB and is never retrained
+# or rewritten by this repository.
+!models/iceberg/*.pt
+models/iceberg/*.part
+models/iceberg/*.tmp

@@ -1,0 +1,21 @@
+{
+  "generated_at_utc": "2026-09-28T18:53:11.549320+00:00",
+  "checkpoint": "C:\\Users\\Sanika\\OneDrive\\Desktop\\SIH_2026\\antarctic_route_optimization\\models\\iceberg\\best_sar_iceberg_model.pt",
+  "data_yaml": "C:\\Users\\Sanika\\OneDrive\\Desktop\\SIH_2026\\antarctic_route_optimization\\data.yaml",
+  "status": "BLOCKED",
+  "metrics_measured": null,
+  "metrics_stored_at_training": {
+    "metrics/precision(B)": 0.82846,
+    "metrics/recall(B)": 0.5393,
+    "metrics/mAP50(B)": 0.5202,
+    "metrics/mAP50-95(B)": 0.18031,
+    "val/box_loss": 3.66633,
+    "val/cls_loss": 4.98951,
+    "val/dfl_loss": 3.58283,
+    "fitness": 0.18031
+  },
+  "blockers": [
+    "data config not found: C:\\Users\\Sanika\\OneDrive\\Desktop\\SIH_2026\\antarctic_route_optimization\\data.yaml"
+  ],
+  "checkpoint_date": "2026-09-19T10:15:06.809173+05:30"
+}

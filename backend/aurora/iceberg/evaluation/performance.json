@@ -1,0 +1,28 @@
+{
+  "generated_at_utc": "2026-09-28T18:51:20.328584+00:00",
+  "device": "CPU (torch 2.14.0+cpu, cuda_available=False)",
+  "gpu_inference": "NOT AVAILABLE (CPU-only torch build, no CUDA device)",
+  "model": "best_sar_iceberg_model.pt",
+  "input_resolution": {
+    "inference_imgsz": 640,
+    "native_tile_px": 512
+  },
+  "batch_size": 1,
+  "samples": 2,
+  "latency_ms": {
+    "mean": 1461.2,
+    "median": 1461.2,
+    "min": 1314.0,
+    "max": 1608.5,
+    "stdev": 147.2
+  },
+  "blank_image_latency_ms": 2321.8,
+  "blank_image_detections": 0,
+  "detections_per_sample_at_conf_0.25": [
+    0,
+    0
+  ],
+  "claims": [
+    "measured on this machine only; no real-time claim"
+  ]
+}

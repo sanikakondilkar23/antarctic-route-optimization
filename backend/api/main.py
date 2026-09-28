@@ -1339,6 +1339,13 @@ def create_app() -> Flask:
     app = Flask(__name__, static_folder=None)
     CORS(app)
 
+    # ---------------- iceberg detection (AURORA component) ----------------
+    # Imported lazily-safe: the blueprint itself pulls in no ML stack, and the
+    # detector is only constructed when an iceberg endpoint is actually called.
+    from backend.api.iceberg_api import bp as iceberg_bp
+    app.register_blueprint(iceberg_bp)
+
+
     # ---------------- health ----------------
 
     @app.get("/api/health")

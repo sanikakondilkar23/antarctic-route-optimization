@@ -1,0 +1,12 @@
+{
+  "generated_at_utc": "2026-09-28T18:32:53.844418+00:00",
+  "data_yaml": "C:\\Users\\Sanika\\OneDrive\\Desktop\\SIH_2026\\antarctic_route_optimization\\data.yaml",
+  "status": "BLOCKED",
+  "blockers": [
+    "C:\\Users\\Sanika\\OneDrive\\Desktop\\SIH_2026\\antarctic_route_optimization\\data.yaml not found"
+  ],
+  "splits": {},
+  "leakage": {},
+  "class_balance": {},
+  "safe_fixes_applied": []
+}
