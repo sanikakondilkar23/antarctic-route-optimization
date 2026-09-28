@@ -86,28 +86,52 @@ ROUTE_JSON = ROOT / "outputs" / "final_demo" / "final_route.json"
 FRONTEND_DIST = ROOT / "frontend" / "route_demo" / "dist"
 
 # ---------------------------------------------------------------------------
-# Configurable data root (Windows repo / Colab / cloud)
+# Dataset location — resolved by configuration, never hardcoded here.
 #
-#   SIH_DATA_ROOT=/content/drive/MyDrive/SIH_26_Sanika   (Colab)
-#   SIH_DATA_ROOT=C:\...\SIH_2026\antarctic_route_optimization   (Windows)
+# The dataset lives at:  My Drive/SIH_26_Sanika/dataset
+# which in Google Colab is  /content/drive/MyDrive/SIH_26_Sanika/dataset
 #
-# When unset, the committed in-repository artifacts are used.  The browser
-# never talks to Google Drive: only this backend does.
+# Resolution lives in src/data/paths.py so the loaders, the audit tooling and
+# this API all agree. Point SIH_DATA_ROOT at any synced/mounted copy to use a
+# local or cloud path instead:
+#
+#   SIH_DATA_ROOT=/content/drive/MyDrive/SIH_26_Sanika/dataset   (Colab)
+#   SIH_DATA_ROOT=D:\SIH\dataset                                (mounted Drive)
+#
+# When the root cannot be resolved the API keeps serving the committed
+# in-repository artifacts and reports every layer NOT_AVAILABLE. The browser
+# never talks to Drive; only this backend does.
 # ---------------------------------------------------------------------------
-DATA_ROOT = Path(os.environ.get("SIH_DATA_ROOT") or ROOT)
+DATA_ROOT = data_paths.data_root() or ROOT
 CMEMS_ROOT = os.environ.get("ARCTIC_CMEMS_ROOT") or os.environ.get(
     "SIH_CMEMS_ROOT") or None
-CMEMS_DATE_AWARE_ROOT = (
-    str(DATA_ROOT / "dataset" / "Copernicus_Ocean") if CMEMS_ROOT is None
-    else CMEMS_ROOT
+#: Copernicus Ocean root for the date-aware loader, from configuration.
+CMEMS_DATE_AWARE_ROOT = str(
+    CMEMS_ROOT if CMEMS_ROOT is not None
+    else (data_paths.layer_path("copernicus_ocean") or DATA_ROOT / "dataset" / "Copernicus_Ocean")
 )
 ICEBERG_CANDIDATES = [
     Path(os.environ["SIH_ICEBERG_PATH"]) if os.environ.get("SIH_ICEBERG_PATH")
     else None,
+    data_paths.layer_path("icebergs"),
     DATA_ROOT / "dataset" / "iceberg",
     DATA_ROOT / "iceberg",
     ROOT / "backend" / "cache" / "iceberg_risk.npy",
 ]
+#: Provenance of the dataset location, surfaced by /api/system/status.
+def _resolved_root_str() -> Optional[str]:
+    root = data_paths.data_root()
+    return str(root) if root else None
+
+
+DATASET_LOCATION = {
+    "hint": data_paths.DATASET_LOCATION_HINT,
+    "resolved_root": _resolved_root_str(),
+    "resolution": data_paths.data_root_source(),
+    "searched_roots": data_paths.root_candidates(),
+    "env_var": data_paths.DATA_ROOT_ENVVAR,
+}
+
 
 ROUTE_START = datetime(2026, 1, 6, tzinfo=timezone.utc)
 #: Row/col defaults are used ONLY by the GET endpoints, which take grid indices
@@ -1645,6 +1669,8 @@ def create_app() -> Flask:
             "system": "IceRoute-Robust",
             "title": "Antarctic Ocean Route Optimization",
             "data_root": str(DATA_ROOT),
+            "dataset_location": DATASET_LOCATION,
+            "datasets": data_paths.describe_all(),
             "generated_utc": datetime.now(timezone.utc).isoformat(),
             "environment": {
                 "sic": {

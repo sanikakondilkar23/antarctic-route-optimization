@@ -5,6 +5,7 @@ import {
   optimizeRoute, rerouteRoute,
 } from './api.js'
 import SicMap from './components/SicMap.jsx'
+import { DEFAULT_BASEMAP } from './components/basemaps.js'
 import Timeline from './components/Timeline.jsx'
 import Header from './components/Header.jsx'
 import './planner.css'
@@ -69,6 +70,7 @@ export default function App() {
   const [busy, setBusy] = useState({ slice: false, optimize: false, reroute: false })
   const [notice, setNotice] = useState(null) // {tone, text}
   const [pickMode, setPickMode] = useState(null) // 'start' | 'goal' | null
+  const [basemap, setBasemap] = useState(DEFAULT_BASEMAP)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(160)
   const [vesselT, setVesselT] = useState(null)
@@ -326,6 +328,8 @@ export default function App() {
               uncertainty: showUncertainty,
               rerouteDiff: true,
             }}
+            basemap={basemap}
+            onBasemap={setBasemap}
             primaryRoute={primaryRoute}
             originRoute={originRoute}
             changedCells={changedCells}
@@ -345,6 +349,9 @@ export default function App() {
               routeLabel: rr ? `UPDATED D${rr.new_timestep}` : plan ? `OPTIMIZED D${plan.timestep}` : '—',
               waypoints: plan?.waypoints ?? '—',
               length: plan ? fmt(plan.route_length, 2) : '—',
+              lengthKm: plan && plan.route_length_km != null
+                ? `${fmtInt(plan.route_length_km)} km`
+                : '—',
               meanSic: plan ? fmt(plan.mean_sic) : '—',
               maxSic: plan ? fmt(plan.max_sic) : '—',
               start: `${dms(start.lat, 'N', 'S')} ${dms(start.lon, 'E', 'W')}`,

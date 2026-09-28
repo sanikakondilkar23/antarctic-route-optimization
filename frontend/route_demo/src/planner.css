@@ -353,6 +353,162 @@
 .btn-warn { background: linear-gradient(180deg, #b45309, #78350f); border-color: #f59e0b; color: #fff7ed; }
 .btn-warn:hover:not(:disabled) { border-color: #fbbf24; }
 
+/* --------------------------------------------------------------- Leaflet */
+/* The chart is a real Leaflet map on a public geographic basemap, so the
+   basemap supplies the coastline, the ocean, the place names and the
+   graticule. These rules only skin Leaflet's own chrome so it matches the
+   dark operations shell; no map data is touched.                            */
+
+/* The host is its own stacking context, so Leaflet's internal pane
+   z-indices (tiles 200 … controls 1000) stay INSIDE the map and cannot
+   paint over the HUD overlays that sit above it. */
+.leaflet-host {
+  position: absolute; inset: 0;
+  z-index: 1;
+  background: #05101c;
+  outline: none;
+}
+.leaflet-host.picking { cursor: crosshair !important; }
+.leaflet-host .leaflet-container { background: #05101c; font: inherit; }
+.leaflet-host a { color: var(--cyan); }
+
+/* Tiles must stay crisp-ish and never bleed over the HUD overlays. */
+.leaflet-tile-pane { z-index: 200; }
+.leaflet-pane img.leaflet-image-layer { image-rendering: auto; }
+
+.leaflet-control-container .leaflet-top.leaflet-left  { top: 74px; left: 10px; }
+.leaflet-control-container .leaflet-bottom.leaflet-right { bottom: 118px; right: 10px; }
+
+.leaflet-control-scale {
+  background: rgba(6, 12, 21, 0.85);
+  border: 1px solid rgba(120, 165, 215, 0.26);
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+  color: #cfe4f7;
+  font: 600 9px var(--mono);
+  padding: 1px 5px 2px;
+  line-height: 1.2;
+}
+.leaflet-control-scale-line { border-color: rgba(207, 228, 247, 0.85); }
+
+.leaflet-control-attribution {
+  background: rgba(6, 12, 21, 0.82) !important;
+  color: #8fb0d0;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 5px 0 0 0;
+}
+.leaflet-control-attribution a { color: #9dc0e4; }
+
+/* --- route direction arrows (drawn on the basemap's own projection) --- */
+.rt-arrow-wrap { pointer-events: none; }
+.rt-arrow {
+  display: block; width: 14px; height: 14px;
+  transform-origin: 50% 50%;
+}
+.rt-arrow::before {
+  content: '';
+  position: absolute; left: 3px; top: 3px;
+  border-left: 5px solid rgba(232, 247, 255, 0.92);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  filter: drop-shadow(0 0 2px rgba(2, 8, 16, 0.9));
+}
+
+/* --- endpoint markers, navigation-map style --- */
+.pin-wrap { pointer-events: none; }
+.pin {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(4, 9, 16, 0.55);
+  border: 2px solid var(--c, #fff);
+  box-shadow: 0 0 0 3px rgba(2, 8, 16, 0.55), 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+.pin-start { --c: #34d399; }
+.pin-goal  { --c: #f87171; }
+.pin-vessel { --c: #38bdf8; }
+.pin-vessel .pin { width: 24px; height: 24px; background: #38bdf8; }
+.pin-dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; border: 2px solid #fff; }
+.pin-hollow { width: 10px; height: 10px; border-radius: 50%; background: var(--c); border: 2px solid #fff; }
+.pin-star {
+  width: 14px; height: 14px; background: #f87171;
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+}
+.pin-sel .pin { background: rgba(4, 9, 16, 0.6); }
+
+.leaflet-tooltip.pin-label {
+  background: rgba(4, 9, 16, 0.88);
+  border: 1px solid rgba(120, 165, 215, 0.4);
+  border-radius: 5px;
+  color: #e8f4ff;
+  font: 800 9px/1.2 var(--sans);
+  letter-spacing: 0.1em;
+  padding: 2px 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+}
+.leaflet-tooltip.pin-label::before { display: none; }
+.pin-label-start { color: #a7f3d0; border-color: rgba(52, 211, 153, 0.5); }
+.pin-label-goal { color: #fecaca; border-color: rgba(248, 113, 113, 0.5); }
+.pin-label-sel { color: #cfe4f7; }
+
+.grid-note {
+  pointer-events: none;
+  font: 700 9px/16px var(--sans);
+  color: rgba(251, 191, 36, 0.85);
+  background: rgba(4, 9, 16, 0.7);
+  border-radius: 4px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+/* --- basemap switcher: the same affordance as a map-type picker --- */
+.basemap-switch {
+  position: absolute;
+  z-index: 6;
+  right: 12px;
+  /* clears the route-result HUD in the top-right corner */
+  top: 116px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: stretch;
+  pointer-events: auto;
+}
+.basemap-switch button {
+  border-radius: 5px;
+  border: 1px solid rgba(120, 165, 215, 0.24);
+  background: rgba(6, 12, 21, 0.88);
+  color: #8fb0d0;
+  font: 700 8px/1 var(--sans);
+  letter-spacing: 0.08em;
+  padding: 4px 6px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.basemap-switch button:hover { color: #fff; border-color: #7dd3fc; }
+.basemap-switch button.on {
+  color: #04121e;
+  background: linear-gradient(180deg, #7dd3fc, #38bdf8);
+  border-color: #7dd3fc;
+}
+
+/* --- SIC layer opacity slider inside the legend key --- */
+.ovb-opacity {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 5px;
+  font: 600 8.5px/1 var(--sans);
+  letter-spacing: 0.06em;
+  color: #7f9dc0;
+  text-transform: uppercase;
+}
+.ovb-opacity input { flex: 1; accent-color: #38bdf8; height: 10px; }
+.ovb-opacity b { font-family: var(--mono); color: #cfe4f7; }
+
+.ovb.status-chip { border-color: rgba(56, 189, 248, 0.5); }
+.ovb.status-chip.ok { border-color: rgba(52, 211, 153, 0.5); }
+.ovb.status-chip.warn { border-color: rgba(251, 191, 36, 0.5); }
+.chip-l { font: 600 10.5px/1.35 var(--sans); color: #e0f2fe; }
+
 /* map controls: zoom / reset / fit-route, deliberately small and quiet */
 .map-ctrls {
   position: absolute;

@@ -1,0 +1,277 @@
+{
+  "generated_utc": "2026-09-27T15:39:06.805720+00:00",
+  "dataset_location": {
+    "hint": "My Drive/SIH_26_Sanika/dataset  (Google Colab mount: /content/drive/MyDrive/SIH_26_Sanika/dataset)",
+    "env_var": "SIH_DATA_ROOT",
+    "env_value": null,
+    "resolved_root": null,
+    "resolution": "unresolved",
+    "searched_roots": [
+      "$SIH_DATA_ROOT",
+      "\\content\\drive\\MyDrive\\SIH_26_Sanika\\dataset  (absent: /content/drive not mounted)"
+    ],
+    "drive_mount_present": false
+  },
+  "datasets": [
+    {
+      "dataset": "SIC",
+      "feeds": "sic_mean (sea-ice concentration)",
+      "layer": "sic",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_SIC_ROOT"
+      ]
+    },
+    {
+      "dataset": "ERA5",
+      "feeds": "wind_cost (u10/v10 -> traversal cost)",
+      "layer": "era5",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_ERA5_ROOT"
+      ]
+    },
+    {
+      "dataset": "Copernicus_Ocean",
+      "feeds": "current_uo / current_vo (vectors)",
+      "layer": "copernicus_ocean",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$ARCTIC_CMEMS_ROOT"
+      ]
+    },
+    {
+      "dataset": "CMEMS_Future_Forecast",
+      "feeds": "forecast currents for future routing",
+      "layer": "cmems_future",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_CMEMS_FUTURE_ROOT"
+      ]
+    },
+    {
+      "dataset": "AIS_GFW",
+      "feeds": "observational validation only",
+      "layer": "ais",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_DATA_ROOT (unset) and \\content\\drive\\MyDrive\\SIH_26_Sanika\\dataset (no Drive mount)"
+      ]
+    },
+    {
+      "dataset": "ICEBERGS",
+      "feeds": "iceberg_risk",
+      "layer": "icebergs",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_ICEBERG_PATH"
+      ]
+    },
+    {
+      "dataset": "CMEMS_PHY",
+      "feeds": "ocean physical fields",
+      "layer": "cmems_phy",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_CMEMS_PHY_ROOT"
+      ]
+    },
+    {
+      "dataset": "ECMWF_ENS",
+      "feeds": "ensemble wind",
+      "layer": "ecmwf_ens",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_ECMWF_ROOT"
+      ]
+    },
+    {
+      "dataset": "GEBCO",
+      "feeds": "depth / land mask",
+      "layer": "gebco",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_GEBCO_PATH"
+      ]
+    },
+    {
+      "dataset": "OSI_SAF",
+      "feeds": "sea-ice concentration (alt source)",
+      "layer": "osi_saf",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_DATA_ROOT (unset) and \\content\\drive\\MyDrive\\SIH_26_Sanika\\dataset (no Drive mount)"
+      ]
+    },
+    {
+      "dataset": "AMSR2",
+      "feeds": "sea-ice concentration (alt source)",
+      "layer": "amsr2",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_DATA_ROOT (unset) and \\content\\drive\\MyDrive\\SIH_26_Sanika\\dataset (no Drive mount)"
+      ]
+    },
+    {
+      "dataset": "Vessel",
+      "feeds": "vessel constraints (static metadata)",
+      "layer": "vessel",
+      "connected_path": null,
+      "status": "ROOT_UNRESOLVED",
+      "files": 0,
+      "size_bytes": 0,
+      "size_human": "0.0 B",
+      "validation": {
+        "result": "NOT_VALIDATED_NO_PATH",
+        "readable_files": 0,
+        "unreadable_files": 0,
+        "details": "no directory to validate"
+      },
+      "largest_files": [],
+      "configured_by": [
+        "$SIH_DATA_ROOT (unset) and \\content\\drive\\MyDrive\\SIH_26_Sanika\\dataset (no Drive mount)"
+      ]
+    }
+  ],
+  "summary": {
+    "datasets_expected": 12,
+    "connected": 0,
+    "not_connected": 12,
+    "total_files": 0,
+    "total_size_bytes": 0,
+    "total_size_human": "0.0 B"
+  },
+  "integrity": {
+    "downloaded_anything": false,
+    "copied_anything": false,
+    "moved_anything": false,
+    "regridded_or_resampled": false,
+    "split_any_file": false,
+    "zero_filled_nan": false,
+    "overwrote_anything": false,
+    "modified_protected_artifacts": false,
+    "retrained_model": false,
+    "regenerated_route": false
+  }
+}
