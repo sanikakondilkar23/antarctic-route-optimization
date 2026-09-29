@@ -1036,7 +1036,15 @@ def discover_cmems() -> Tuple[bool, str, Tuple[str, ...]]:
 
 @lru_cache(maxsize=1)
 def discover_sic_checkpoints() -> Tuple[Dict[str, Any], ...]:
-    """Locate independently trained SIC forecasting checkpoints (read-only)."""
+    """
+    Locate independently trained SIC forecasting checkpoints (read-only).
+
+    ``DATA_ROOT/models`` is a shared tree, so it also holds checkpoints that
+    belong to other components (the YOLOv8 iceberg detector under
+    ``models/iceberg/``).  Each ``.pt`` is probed for the ConvLSTM SIC
+    signature and anything that is not a SIC forecaster is left out, so this
+    list only ever contains SIC forecasting checkpoints.
+    """
     out: List[Dict[str, Any]] = []
     search_roots = [ROOT / "backend" / "runs", DATA_ROOT / "models",
                     DATA_ROOT / "models" / "RL_final"]
@@ -1065,7 +1073,8 @@ def discover_sic_checkpoints() -> Tuple[Dict[str, Any], ...]:
                 entry["n_tensors"] = len(keys)
             except Exception as exc:
                 entry["error"] = f"{type(exc).__name__}"
-            out.append(entry)
+            if entry["is_sic_forecaster"]:
+                out.append(entry)
     return tuple(out)
 
 
@@ -1097,7 +1106,17 @@ def discover_route_policy() -> Dict[str, Any]:
     """
     path = ROOT / "outputs" / "ml" / "route_policy.pt"
     if not path.exists():
-        return {"present": False, "label": "Route ML policy: MISSING"}
+        # *.pt is gitignored and the checkpoint was never committed, so the
+        # honest answer is "missing" - with the same safety claims the loaded
+        # branch makes, because neither case ever drives the shipped route.
+        return {
+            "present": False,
+            "label": "Route ML policy: MISSING",
+            "is_real_antarctic_accuracy": False,
+            "used_for_final_route": False,
+            "note": "outputs/ml/route_policy.pt is gitignored (*.pt) and was "
+                    "never committed; no accuracy figure is claimed.",
+        }
     info: Dict[str, Any] = {
         "present": True,
         "path": "outputs/ml/route_policy.pt",
