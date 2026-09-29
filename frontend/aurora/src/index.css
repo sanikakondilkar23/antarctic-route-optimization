@@ -1,0 +1,273 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-graphite-900 font-sans antialiased text-white;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: rgba(127, 180, 212, 0.28);
+    color: #ffffff;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply font-display tracking-tight;
+  }
+}
+
+@layer components {
+  /* --- Surfaces ------------------------------------------------------- */
+  .panel {
+    @apply border border-graphite-600 bg-graphite-850 shadow-panel;
+  }
+  .panel-flat {
+    @apply border border-graphite-600 bg-graphite-800;
+  }
+  .card {
+    @apply relative border border-graphite-600 bg-graphite-850 shadow-panel transition-colors duration-150;
+  }
+  .card-hover {
+    @apply hover:border-graphite-500;
+  }
+  .card-tactical {
+    @apply border border-graphite-600 bg-graphite-850 shadow-overlay;
+  }
+  .rule {
+    @apply border-graphite-600;
+  }
+
+  /* --- Typography helpers --------------------------------------------- */
+  .eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-steel;
+  }
+  .section-title {
+    @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-white/90;
+  }
+  .mono-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.14em] text-steel;
+  }
+  .num {
+    @apply font-mono tabular-nums;
+  }
+
+  /* --- Form controls --------------------------------------------------- */
+  .input {
+    @apply w-full rounded border border-graphite-600 bg-graphite-950 px-3 py-2 text-sm text-white placeholder:text-steel outline-none transition focus:border-ice-dim focus:ring-1 focus:ring-ice-dim/40 disabled:opacity-50;
+  }
+  .input-label {
+    @apply mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
+  }
+  .select {
+    @apply input appearance-none pr-8;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236E7881' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 14px;
+  }
+
+  /* --- Buttons --------------------------------------------------------- */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded border border-ice-dim bg-ice-dim px-4 py-2 text-[13px] font-semibold text-graphite-950 transition hover:border-ice hover:bg-ice focus:outline-none focus:ring-2 focus:ring-ice/40 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded border border-graphite-500 bg-graphite-750 px-4 py-2 text-[13px] font-semibold text-white transition hover:border-graphite-500 hover:bg-graphite-700 focus:outline-none focus:ring-2 focus:ring-ice/30 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded px-3 py-1.5 text-[13px] font-medium text-mist transition hover:bg-graphite-750 hover:text-white focus:outline-none disabled:opacity-45;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded border border-danger/50 bg-danger/10 px-4 py-2 text-[13px] font-semibold text-danger transition hover:bg-danger/20;
+  }
+
+  /* --- Chips, tags, nav ------------------------------------------------ */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-sm border border-graphite-600 bg-graphite-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-mist;
+  }
+  .nav-item {
+    @apply relative whitespace-nowrap px-3 py-[7px] text-[13px] font-medium text-mist transition-colors hover:text-white;
+  }
+  .nav-item-active {
+    @apply whitespace-nowrap px-3 py-[7px] text-[13px] font-semibold text-white;
+  }
+  .nav-item-active::after {
+    content: '';
+    @apply absolute inset-x-3 -bottom-px h-[2px] bg-ice;
+  }
+  .th {
+    @apply border-b border-graphite-600 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
+  }
+  .th-right {
+    @apply border-b border-graphite-600 px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
+  }
+  .td {
+    @apply px-3 py-2 text-[12px] text-white/85;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #133850;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #1E5274;
+    background-clip: content-box;
+  }
+
+  /* --- AURORA motif: polar contour field + navigation grid ------------ */
+  .contour-field {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='860' height='860' viewBox='0 0 860 860'%3E%3Cg fill='none' stroke='%237FB4D4' stroke-opacity='0.075'%3E%3Cellipse cx='430' cy='430' rx='46' ry='34' transform='rotate(-14 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='92' ry='68' transform='rotate(-11 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='140' ry='104' transform='rotate(-8 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='190' ry='142' transform='rotate(-5 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='242' ry='182' transform='rotate(-2 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='296' ry='224' transform='rotate(1 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='352' ry='268' transform='rotate(4 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='410' ry='314' transform='rotate(7 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='470' ry='362' transform='rotate(10 430 430)'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 860px 860px;
+    background-repeat: repeat;
+  }
+
+  .hairline-grid {
+    background-image: linear-gradient(rgba(127, 180, 212, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(127, 180, 212, 0.045) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .aurora-band {
+    background-image: linear-gradient(
+      100deg,
+      rgba(127, 180, 212, 0) 6%,
+      rgba(127, 180, 212, 0.14) 32%,
+      rgba(81, 128, 155, 0.2) 50%,
+      rgba(127, 180, 212, 0.06) 68%,
+      rgba(127, 180, 212, 0) 88%
+    );
+    background-size: 240% 100%;
+    animation: aurora-drift 22s ease-in-out infinite alternate;
+  }
+
+  @keyframes aurora-drift {
+    from {
+      background-position: 0% 50%;
+    }
+    to {
+      background-position: 100% 50%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .aurora-band {
+      animation: none;
+    }
+  }
+
+  .fade-up {
+    animation: fade-up 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* --------------------------------------------------------------------- */
+/* Leaflet - neutral charcoal chart theme                                */
+/* --------------------------------------------------------------------- */
+.leaflet-container {
+  background: #040D15 !important;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.leaflet-control-zoom a {
+  background: #0B2233 !important;
+  color: #c6d6e0 !important;
+  border: 1px solid #133850 !important;
+  border-radius: 3px !important;
+  width: 28px !important;
+  height: 28px !important;
+  line-height: 26px !important;
+  font-weight: 400 !important;
+}
+.leaflet-control-zoom a:hover {
+  background: #0F2B41 !important;
+  color: #ffffff !important;
+}
+.leaflet-control-zoom {
+  border: none !important;
+  border-radius: 3px !important;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45) !important;
+  gap: 0;
+}
+.leaflet-bar {
+  border: none !important;
+}
+.leaflet-control-attribution {
+  background: rgba(4, 13, 21, 0.86) !important;
+  color: #5a636b !important;
+  font-size: 9px !important;
+  padding: 1px 6px !important;
+  border-top-left-radius: 2px;
+}
+.leaflet-control-attribution a {
+  color: #6e7881 !important;
+}
+.leaflet-popup-content-wrapper {
+  background: #0B2233 !important;
+  color: #e9ecef !important;
+  border-radius: 4px !important;
+  border: 1px solid #133850 !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+}
+.leaflet-popup-tip {
+  background: #0B2233 !important;
+  border: 1px solid #133850 !important;
+}
+.leaflet-popup-content {
+  margin: 10px 12px !important;
+  font-size: 12px;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #6e7881 !important;
+}
+.leaflet-tooltip {
+  background: #0A1C2B !important;
+  border: 1px solid #133850 !important;
+  border-radius: 3px !important;
+  color: #e9ecef !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+  font-size: 11px;
+}
+.leaflet-tooltip-top::before {
+  border-top-color: #133850 !important;
+}
+.leaflet-tooltip-bottom::before {
+  border-bottom-color: #133850 !important;
+}
+.leaflet-tooltip-left::before {
+  border-left-color: #133850 !important;
+}
+.leaflet-tooltip-right::before {
+  border-right-color: #133850 !important;
+}
+.leaflet-container img.leaflet-tile {
+  filter: saturate(0.55) brightness(0.86) contrast(1.04);
+}

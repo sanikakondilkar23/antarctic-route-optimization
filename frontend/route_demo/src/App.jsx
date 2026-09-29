@@ -3,11 +3,15 @@ import {
   fetchMetadata, fetchSystemStatus, fetchLimitations, fetchSlice, cachedSlice,
   fetchUncertainty, cachedUncertainty, fetchCurrent, fetchCoastline, buildDiff,
   optimizeRoute, rerouteRoute,
+  fetchAuroraStatus, fetchIcebergSamples, fetchIcebergModel, auroraAnalyze,
 } from './api.js'
 import SicMap from './components/SicMap.jsx'
 import { DEFAULT_BASEMAP } from './components/basemaps.js'
 import Timeline from './components/Timeline.jsx'
 import Header from './components/Header.jsx'
+import {
+  ModelStatusCard, IcebergCard, AnalysisCard,
+} from './components/AuroraModels.jsx'
 import './planner.css'
 
 /**
@@ -75,6 +79,19 @@ export default function App() {
   const [speed, setSpeed] = useState(160)
   const [vesselT, setVesselT] = useState(null)
 
+  /* ---- AURORA integration layer (three models) ---------------------- */
+  const [aurora, setAurora] = useState(null)      // GET /api/aurora/status
+  const [iceModel, setIceModel] = useState(null)  // GET /api/icebergs/model
+  const [iceSamples, setIceSamples] = useState(null)
+  const [analysis, setAnalysis] = useState(null)  // POST /api/aurora/analyze
+  const [iceResult, setIceResult] = useState(null)
+  const [sample, setSample] = useState('')
+  const [confidence, setConfidence] = useState(0.25)
+  const [vesselSpeed, setVesselSpeed] = useState(12)
+  const [modelBusy, setModelBusy] = useState({ analyze: false, detect: false })
+  const [modelError, setModelError] = useState({ analyze: null, detect: null })
+  const fileRef = useRef(null)
+
   const sweepRef = useRef(null)
 
   /* ------------------------------------------------------------------ */
@@ -97,6 +114,30 @@ export default function App() {
       } catch (e) {
         if (!alive) return
         setFatal(e.message)
+      }
+    })()
+    return () => { alive = false }
+  }, [])
+
+  /* Real runtime status of the three models + the detector's sample tiles.
+     Failures are surfaced, never replaced with an optimistic default. */
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const [st, model, samples] = await Promise.all([
+          fetchAuroraStatus().catch((e) => ({ error: e.message })),
+          fetchIcebergModel().catch((e) => ({ error: e.message })),
+          fetchIcebergSamples().catch(() => null),
+        ])
+        if (!alive) return
+        setAurora(st)
+        setIceModel(model)
+        setIceSamples(samples)
+        const first = samples?.samples?.[0]?.name
+        if (first) setSample(first)
+      } catch (e) {
+        if (alive) setModelError((m) => ({ ...m, detect: e.message }))
       }
     })()
     return () => { alive = false }
@@ -215,6 +256,92 @@ export default function App() {
       setBusy((b) => ({ ...b, reroute: false }))
     }
   }, [plan, rrTarget, timestep, meta, slice, sweep])
+
+  /* ---------------------------------------------------------------- */
+  /* ACTION — UNIFIED AURORA ANALYSIS (SIC + iceberg + env + route)    */
+  /* ---------------------------------------------------------------- */
+  const onAnalyze = useCallback(async () => {
+    setModelBusy((b) => ({ ...b, analyze: true }))
+    setModelError((m) => ({ ...m, analyze: null }))
+    setNotice({ tone: 'busy', text: 'POST /api/aurora/analyze · environment → SIC → iceberg → existing A* optimizer' })
+    try {
+      const res = await auroraAnalyze({
+        start,
+        destination: goal,
+        timestep,
+        vessel_parameters: { speed_knots: Number(vesselSpeed) || 12 },
+      })
+      setAnalysis(res)
+      setTimestep(res.route.timestep)
+      sweep()
+      setNotice({
+        tone: 'ok',
+        text: `ANALYZED · D${res.route.timestep} · ${res.route.waypoints} waypoints · ${fmtInt(res.route.distance.km)} km · ETA ${fmt(res.route.eta.hours, 1)} h · SIC along route max ${fmt(res.sic.along_route.max)} · iceberg detections ${res.icebergs.detection_count ?? 'not run'}`,
+      })
+    } catch (e) {
+      setAnalysis(null)
+      setModelError((m) => ({ ...m, detect: m.detect, analyze: e.message }))
+      setNotice({ tone: 'bad', text: `ANALYSIS REJECTED — ${e.reason || 'error'}: ${e.message}` })
+    } finally {
+      setModelBusy((b) => ({ ...b, analyze: false }))
+    }
+  }, [start, goal, timestep, vesselSpeed, sweep])
+
+  /* ---------------------------------------------------------------- */
+  /* ACTION — REAL YOLOv8 ICEBERG DETECTION ON A SAR TILE              */
+  /* ---------------------------------------------------------------- */
+  const runDetection = useCallback(async (iceberg) => {
+    setModelBusy((b) => ({ ...b, detect: true }))
+    setModelError((m) => ({ ...m, detect: null }))
+    setNotice({ tone: 'busy', text: 'POST /api/aurora/analyze · YOLOv8-nano SAR detection' })
+    try {
+      const res = await auroraAnalyze({
+        start,
+        destination: goal,
+        timestep,
+        vessel_parameters: { speed_knots: Number(vesselSpeed) || 12 },
+        iceberg,
+      })
+      setAnalysis(res)
+      setIceResult(res.icebergs)
+      setNotice({
+        tone: 'ok',
+        text: res.icebergs.detection_count
+          ? `DETECTED ${res.icebergs.detection_count} iceberg(s) · ${res.icebergs.coordinate_space} space · location ${res.icebergs.location == null ? 'null' : 'lon/lat'}`
+          : `DETECTION COMPLETE · 0 icebergs at conf ≥ ${res.icebergs.confidence_threshold ?? confidence} — the model's real answer for this tile`,
+      })
+    } catch (e) {
+      setIceResult(null)
+      setModelError((m) => ({ ...m, detect: e.message }))
+      setNotice({ tone: 'bad', text: `DETECTION FAILED — ${e.reason || 'error'}: ${e.message}` })
+    } finally {
+      setModelBusy((b) => ({ ...b, detect: false }))
+    }
+  }, [start, goal, timestep, vesselSpeed, confidence])
+
+  const onRunDetection = useCallback(
+    () => runDetection(sample ? { sample, confidence: Number(confidence) } : null),
+    [runDetection, sample, confidence],
+  )
+
+  const onIceFile = useCallback((arg) => {
+    // Called either as a click (no arg) or with a File from the hidden input.
+    if (!(arg instanceof File)) {
+      const input = document.querySelector('input[data-iceberg-file]')
+      if (input) input.click()
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '')
+      runDetection({
+        image_base64: dataUrl.split(',', 2)[1] || '',
+        confidence: Number(confidence),
+      })
+    }
+    reader.onerror = () => setModelError((m) => ({ ...m, detect: 'could not read the selected file' }))
+    reader.readAsDataURL(arg)
+  }, [runDetection, confidence])
 
   const onPickCell = useCallback((cell) => {
     if (!pickMode) return
@@ -492,6 +619,31 @@ export default function App() {
             status={status} cmems={cmems} meta={meta} slice={slice}
             limitations={limitations} uncertainty={uncertainty}
             showUncertainty={showUncertainty}
+          />
+
+          <ModelStatusCard status={aurora} />
+
+          <AnalysisCard
+            analysis={analysis}
+            vesselSpeed={vesselSpeed}
+            setVesselSpeed={setVesselSpeed}
+            onRun={onAnalyze}
+            busy={modelBusy.analyze}
+            error={modelError.analyze}
+          />
+
+          <IcebergCard
+            model={iceModel}
+            samples={iceSamples}
+            sample={sample}
+            setSample={setSample}
+            confidence={confidence}
+            setConfidence={setConfidence}
+            onRun={onRunDetection}
+            onFile={onIceFile}
+            busy={modelBusy.detect}
+            result={iceResult}
+            error={modelError.detect}
           />
         </aside>
       </div>

@@ -1261,6 +1261,46 @@ def discover_uncertainty_summary() -> Dict[str, Any]:
     }
 
 
+#: SIC band edges used by the project's own POLARIS-style ice classifier
+#: (backend/scripts/build_routing_grid.py:168-175).  Exposed so the UI never
+#: has to invent a threshold.
+SIC_BANDS: List[Tuple[str, float, float]] = [
+    ("open_water", 0.00, 0.15),
+    ("marginal_ice", 0.15, 0.40),
+    ("moderate_pack", 0.40, 0.70),
+    ("hard_pack", 0.70, 0.85),
+    ("impassable", 0.85, 1.01),
+]
+#: SIC value at/above which a cell counts as "high ice" for the route report.
+SIC_HIGH_THRESHOLD = 0.40
+
+
+def _jsonable(x: Any) -> Any:
+    """
+    Serialisable number: finite floats survive, NaN/Inf become ``None``.
+
+    ``jsonify`` would otherwise emit the non-standard tokens ``NaN``/``Infinity``
+    which the browser's ``JSON.parse`` rejects.
+    """
+    if x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _sic_band(value: Optional[float]) -> str:
+    """Classify one SIC sample with the repository's committed band edges."""
+    if value is None:
+        return "invalid"
+    for name, lo, hi in SIC_BANDS:
+        if lo <= value < hi:
+            return name
+    return "impassable"
+
+
 @lru_cache(maxsize=8)
 def route_profile(t: int, start_row: int, start_col: int,
                   goal_row: int, goal_col: int) -> Dict[str, Any]:
@@ -1273,10 +1313,17 @@ def route_profile(t: int, start_row: int, start_col: int,
     ``routing_dy``, i.e. 0.25 deg at the cell's own latitude).  No value here
     is synthesised — if a cell is NaN the sample is reported as null and is
     never filled in.
+
+    The response also carries the statistics a SIC report needs: min/mean/max,
+    the distance share of the route in each committed ice band, the count and
+    share of high-ice cells (``sic >= 0.40``, the moderate-pack onset in the
+    project's own classifier) and the route's objective split between the SIC
+    term, the distance term and everything else.
     """
     grid, cost_map, _report = route_grid(t, _weights_key())
+    weights = cost_weights()
     result = astar(grid, (start_row, start_col), (goal_row, goal_col),
-                   weights=cost_weights())
+                   weights=weights)
     path = [(int(r), int(c)) for r, c in result.path]
     lat = np.asarray(grid.lat)
     lon = np.asarray(grid.lon)
@@ -1285,14 +1332,21 @@ def route_profile(t: int, start_row: int, start_col: int,
     cum = 0.0
     max_idx = -1
     max_val = -np.inf
+    # One entry per sample: deltas[i] is the great-circle length of the leg
+    # *arriving* at sample i (0.0 for the start).  It must stay exactly the
+    # same length as `samples` or every distance statistic shifts by one.
+    deltas: List[float] = []
     for i, (r, c) in enumerate(path):
+        step_km = 0.0
         if i:
             la0, lo0 = math.radians(float(lat[path[i - 1][0]])), math.radians(float(lon[path[i - 1][1]]))
             la1, lo1 = math.radians(float(lat[r])), math.radians(float(lon[c]))
             x = math.cos(la0) * math.cos(lo0) * math.cos(la1) * math.cos(lo1) \
                 + math.cos(la0) * math.sin(lo0) * math.cos(la1) * math.sin(lo1) \
                 + math.sin(la0) * math.sin(la1)
-            cum += R_KM * math.acos(max(-1.0, min(1.0, x)))
+            step_km = R_KM * math.acos(max(-1.0, min(1.0, x)))
+            cum += step_km
+        deltas.append(step_km)
         v = float(grid.sic_mean[r, c])
         v = v if math.isfinite(v) else None
         if v is not None and v > max_val:
@@ -1304,31 +1358,123 @@ def route_profile(t: int, start_row: int, start_col: int,
             "lat": round(float(lat[r]), 4),
             "lon": round(float(lon[c]), 4),
             "cum_km": round(cum, 2),
+            "delta_km": round(step_km, 3),
             "sic": None if v is None else round(v, 6),
+            "band": _sic_band(v),
+            "high_ice": None if v is None else bool(v >= SIC_HIGH_THRESHOLD),
         })
+
+    # ---- real statistics over the route --------------------------------
+    rows = [p[0] for p in path]
+    cols = [p[1] for p in path]
+    values = [s["sic"] for s in samples]
+    finite_vals = [v for v in values if v is not None]
+
+    band_cells = {name: 0 for name, _lo, _hi in SIC_BANDS}
+    band_cells["invalid"] = 0
+    band_km = {name: 0.0 for name, _lo, _hi in SIC_BANDS}
+    band_km["invalid"] = 0.0
+    high_cells = 0
+    high_km = 0.0
+    total_km = float(cum)
+    for s, d in zip(samples, deltas):
+        name = s["band"]
+        band_cells[name] += 1
+        band_km[name] += d
+        if s["high_ice"]:
+            high_cells += 1
+            high_km += d
+
+    def _pct(x: float) -> Optional[float]:
+        return None if total_km <= 0 else round(100.0 * x / total_km, 2)
+
+    # Distance-weighted mean SIC: only the legs whose SIC is a real number
+    # take part, so a NaN cell can never be read as 0.
+    valid_legs = [(s, d) for s, d in zip(samples, deltas) if s["sic"] is not None]
+    valid_km = sum(d for _s, d in valid_legs)
+    dw_mean = (sum((s["sic"] or 0.0) * d for s, d in valid_legs) / valid_km
+               if valid_km > 0 else None)
+
+    # ---- objective attribution (real, no modelling) --------------------
+    env_sum = float(np.sum(cost_map.env_cost[rows, cols])) if path else 0.0
+    sic_term = cost_map.terms.get("sic")
+    sic_sum = float(np.sum(sic_term[rows, cols])) if (path and sic_term is not None) else 0.0
+    distance_sum = float(result.route_length) * float(weights.w_distance)
+    total_cost = float(result.total_cost)
+    remainder = total_cost - env_sum - distance_sum
+
+    cost_split = {
+        "total_cost": _jsonable(total_cost),
+        "environmental_cost": _jsonable(env_sum),
+        "sic_cost": _jsonable(sic_sum),
+        "distance_cost": _jsonable(distance_sum),
+        "other_environmental_cost": _jsonable(env_sum - sic_sum),
+        "unattributed": _jsonable(remainder),
+        "sic_share_pct": _pct_cost(sic_sum, total_cost),
+        "distance_share_pct": _pct_cost(distance_sum, total_cost),
+        "formula": "w_sic*sic_mean + w_distance*grid_distance",
+        "weights": weights.to_dict(),
+        "terms_active": sorted(cost_map.terms),
+        "note": "environmental_cost = sum of CostMap env over the routed "
+                "cells (start cell included); distance_cost = w_distance * "
+                "A* route length; unattributed is the residual and is 0 when "
+                "only these two terms are enabled.",
+    }
+
     return {
         "timestep": t,
         "success": bool(result.success),
-        "date": str(f.dates[t])[:10],
+        "date": str(field().dates[t])[:10],
+        "source": "REAL A* over backend/cache/routing_sic_2026.npy",
+        "coordinate_space": "WGS84 lat/lon; row/col index the 0.25 deg grid",
+        "route_available": bool(path),
+        "grid": {
+            "n_rows": int(grid.n_rows),
+            "n_cols": int(grid.n_cols),
+            "resolution_deg": float(getattr(grid, "resolution_deg", 0.25)),
+            "lat_range": [float(np.min(lat)), float(np.max(lat))],
+            "lon_range": [float(np.min(lon)), float(np.max(lon))],
+        },
         "waypoints": int(result.num_waypoints),
-        "route_length_grid_units": float(result.route_length),
-        "total_cost": float(result.total_cost),
+        "route_length_grid_units": _jsonable(result.route_length),
+        "total_cost": _jsonable(total_cost),
         "great_circle_length_km": round(cum, 2),
         "samples": samples,
         "max_sic_index": max_idx,
-        "max_sic": None if max_idx < 0 else round(float(max_val), 6),
-        "mean_sic": float(np.nanmean(grid.sic_mean[[p[0] for p in path],
-                                                     [p[1] for p in path]]))
-                     if path else None,
-        "min_sic": float(np.nanmin(grid.sic_mean[[p[0] for p in path],
-                                                  [p[1] for p in path]]))
-                   if path else None,
-        "nan_cells_on_route": int(np.isnan(grid.sic_mean[[p[0] for p in path],
-                                                          [p[1] for p in path]]).sum())
-                              if path else None,
+        "max_sic": _jsonable(max(finite_vals)) if finite_vals else None,
+        "min_sic": _jsonable(min(finite_vals)) if finite_vals else None,
+        "mean_sic": _jsonable(float(np.mean(finite_vals))) if finite_vals else None,
+        "mean_sic_distance_weighted": _jsonable(dw_mean),
+        "nan_cells_on_route": sum(1 for v in values if v is None),
+        "high_ice_threshold": SIC_HIGH_THRESHOLD,
+        "high_ice_threshold_label": "moderate-pack onset "
+                                    "(build_routing_grid.py band edge)",
+        "high_ice_cells": high_cells,
+        "high_ice_cells_pct": (None if not samples
+                               else round(100.0 * high_cells / len(samples), 2)),
+        "high_ice_km": round(high_km, 2),
+        "high_ice_km_pct": _pct(high_km),
+        "band_edges": [{"name": n, "lo": lo, "hi": hi} for n, lo, hi in SIC_BANDS],
+        "bands": {
+            name: {
+                "cells": band_cells[name],
+                "cells_pct": (None if not samples
+                              else round(100.0 * band_cells[name] / len(samples), 2)),
+                "km": round(band_km[name], 2),
+                "km_pct": _pct(band_km[name]),
+            }
+            for name in list(band_cells)
+        },
+        "cost_split": cost_split,
         "note": "cum_km uses a great-circle approximation on the real 0.25 deg "
                 "grid; route_length_grid_units is the repository's own A* cost.",
     }
+
+
+def _pct_cost(part: float, whole: float) -> Optional[float]:
+    if not math.isfinite(part) or not math.isfinite(whole) or whole == 0:
+        return None
+    return round(100.0 * part / whole, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -1338,6 +1484,18 @@ def route_profile(t: int, start_row: int, start_col: int,
 def create_app() -> Flask:
     app = Flask(__name__, static_folder=None)
     CORS(app)
+
+    # ---------------- AURORA integration layer ----------------
+    # The unified compositor (/api/sic/status, /api/sic/predict,
+    # /api/aurora/status, /api/aurora/analyze) and the iceberg detector
+    # blueprint.  Registered here so one app serves all three models; the
+    # compositor reuses the helpers defined in this module rather than
+    # reimplementing routing or raster encoding.
+    from backend.api.aurora_api import bp as aurora_bp
+    app.register_blueprint(aurora_bp)
+
+    from backend.api.iceberg_api import bp as iceberg_bp
+    app.register_blueprint(iceberg_bp)
 
     # ---------------- health ----------------
 

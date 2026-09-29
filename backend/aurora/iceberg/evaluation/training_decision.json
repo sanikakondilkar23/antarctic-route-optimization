@@ -1,0 +1,19 @@
+﻿{
+  "generated_at_utc": "2026-09-28T17:40:00+00:00",
+  "decision": "NOT REQUIRED / BLOCKED",
+  "existing_checkpoint_status": "complete trained final model (stripped best.pt), stored validation metrics present",
+  "reasons": [
+    "best_sar_iceberg_model.pt already holds training + validation metrics (mAP50 0.5202)",
+    "dataset directory absent on this machine (dataset/, dataset_v2/ gitignored, never committed)",
+    "no dataset => no sanity run, no validation split, no new training possible without fabricating data",
+    "repo instructions forbid overwriting best_sar_iceberg_model.pt or inventing a dataset"
+  ],
+  "training_attempted": false,
+  "train_longer_executed": false,
+  "new_artifacts_written": [],
+  "existing_checkpoint_modified": false,
+  "existing_checkpoint_sha256": "75e153cb3e3754c4ff47318ec9f160bfe39b8933455db0b4f7d01b46e55af461",
+  "final_model": "best_sar_iceberg_model.pt",
+  "comparison": "no second checkpoint exists, so no model-vs-model comparison was possible; comparison status: NOT APPLICABLE",
+  "unblock_condition": "restore dataset/ (211/60/31 train/val/test images + YOLO labels) and re-run: python validate_dataset.py && python evaluate_checkpoint.py && python train_longer.py"
+}

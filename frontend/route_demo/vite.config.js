@@ -10,7 +10,9 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        // Default is the documented backend port; override with
+        // AURORA_API_TARGET when 8000 is already taken on this machine.
+        target: process.env.AURORA_API_TARGET || 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
     },

@@ -119,6 +119,65 @@ export async function rerouteRoute({ original_route, new_timestep, start, goal }
 export const fetchRouteProfile = (timestep) =>
   getJSON(`/api/route/profile/${timestep}`)
 
+/* ------------------------------------------------------------------ */
+/* AURORA integration layer — the three project models                 */
+/* ------------------------------------------------------------------ */
+
+async function postJSON(path, payload) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.success === false) {
+    const err = new Error(body.error || `${path} failed (HTTP ${res.status})`)
+    err.reason = body.reason || body.detail?.reason || 'request_failed'
+    err.payload = body
+    throw err
+  }
+  return body
+}
+
+/** GET /api/sic/status — real runtime state of the ConvLSTM forecaster. */
+export const fetchSicStatus = () => getJSON('/api/sic/status')
+
+/**
+ * POST /api/sic/predict — a real forecast frame for one date + horizon.
+ * horizon 0 comes from the committed routing artifact (all 167 days);
+ * horizons 1 and 2 from the 30 dates committed alongside it.
+ * `format: 'stats'` skips the raster and returns only statistics.
+ */
+export const sicPredict = ({ timestep, date, horizon = 0, format = 'b64' } = {}) =>
+  postJSON('/api/sic/predict', { timestep, date, horizon, format })
+
+/** GET /api/aurora/status — the six-row model/data status area. */
+export const fetchAuroraStatus = () => getJSON('/api/aurora/status')
+
+/** GET /api/aurora/iceberg/samples — committed SAR tiles for the detector. */
+export const fetchIcebergSamples = () => getJSON('/api/aurora/iceberg/samples')
+
+/** GET /api/icebergs/status — detector status, checksum and risk state. */
+export const fetchIcebergStatus = () => getJSON('/api/icebergs/status')
+
+/** GET /api/icebergs/model — architecture, thresholds and provenance. */
+export const fetchIcebergModel = () => getJSON('/api/icebergs/model')
+
+/** POST /api/aurora/analyze — the unified SIC -> iceberg -> environment -> route run. */
+export const auroraAnalyze = ({
+  start, destination, date, timestep, vessel_parameters = {}, iceberg = null,
+} = {}) => {
+  const payload = {
+    start,
+    destination,
+    vessel_parameters,
+  }
+  if (date) payload.date = date
+  else if (timestep != null) payload.timestep = Number(timestep)
+  if (iceberg) payload.icebergs = iceberg
+  return postJSON('/api/aurora/analyze', payload)
+}
+
 /** Three independently trained SIC ConvLSTM checkpoints + their own metrics. */
 export const fetchEnsemble = () => memo('ensemble', '/api/models/ensemble')
 
