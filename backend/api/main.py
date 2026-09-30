@@ -83,7 +83,9 @@ from src.routing.scenario_router import (                  # noqa: E402
 
 CACHE = ROOT / "backend" / "cache"
 ROUTE_JSON = ROOT / "outputs" / "final_demo" / "final_route.json"
-FRONTEND_DIST = ROOT / "frontend" / "route_demo" / "dist"
+AURORA_DIST = ROOT / "frontend" / "aurora" / "dist"
+ROUTE_DEMO_DIST = ROOT / "frontend" / "route_demo" / "dist"
+FRONTEND_DIST = AURORA_DIST if (AURORA_DIST / "index.html").exists() else ROUTE_DEMO_DIST
 
 # ---------------------------------------------------------------------------
 # Dataset location — resolved by configuration, never hardcoded here.
@@ -2043,10 +2045,15 @@ def create_app() -> Flask:
 
     @app.get("/<path:filename>")
     def static_files(filename: str):
+        if filename.startswith("api/"):
+            return jsonify({"error": "not found"}), 404
         if FRONTEND_DIST.is_dir():
             candidate = FRONTEND_DIST / filename
             if candidate.is_file():
                 return send_from_directory(str(FRONTEND_DIST), filename)
+            index_path = FRONTEND_DIST / "index.html"
+            if index_path.exists():
+                return send_from_directory(str(FRONTEND_DIST), "index.html")
         return jsonify({"error": "not found"}), 404
 
     @app.errorhandler(404)
