@@ -95,7 +95,11 @@ export default function useSicForecast() {
         const decoded =
           which === LAYER_UNCERTAINTY ? decodeUncertainty(raw) : decodeSlice(raw)
         const vmax = which === LAYER_UNCERTAINTY ? Math.max(decoded.stats?.max || 0, 0.05) : 1
-        const url = rasterToDataUrl(decoded, { kind: which === LAYER_UNCERTAINTY ? 'unc' : 'sic', vmax })
+        const url = rasterToDataUrl(decoded, {
+          kind: which === LAYER_UNCERTAINTY ? 'unc' : 'sic',
+          vmax,
+          meta: metadata,
+        })
         setFrame({
           available: true,
           url,
@@ -120,7 +124,7 @@ export default function useSicForecast() {
         setStatus('error')
       }
     },
-    [],
+    [metadata],
   )
 
   useEffect(() => {

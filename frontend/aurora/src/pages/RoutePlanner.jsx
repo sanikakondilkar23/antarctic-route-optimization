@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AntarcticMap from '../components/map/AntarcticMap'
 import { CoordReadout, FloatPanel, LayerRow, LineLegend, SicLegend } from '../components/map/MapUi'
 import PlannerForm from '../components/planner/PlannerForm'
@@ -127,6 +127,15 @@ export default function RoutePlanner() {
     }
   }, [origin, goal, timestep, snap, meta.data])
 
+  // Automatically re-plan route whenever origin, goal, timestep, or snap changes
+  useEffect(() => {
+    if (!meta.data) return
+    const timer = setTimeout(() => {
+      handlePlan()
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [origin.lat, origin.lon, goal.lat, goal.lon, timestep, snap, meta.data, handlePlan])
+
   /* ------------------------------------------ route SIC profile */
   // GET /api/route/profile/<t> sampled at the exact cells the optimizer
   // returned, so the statistics below describe the route on the chart.
@@ -232,6 +241,30 @@ export default function RoutePlanner() {
     [reroute, meta.data]
   )
 
+  // Checks if the computed plan matches the currently selected origin and goal
+  const isPlanCurrent = useMemo(() => {
+    if (!plan?.start || !plan?.goal) return false
+    const startMatch =
+      Math.abs(plan.start.lat - origin.lat) < 1.0 &&
+      Math.abs(plan.start.lon - origin.lon) < 1.0
+    const goalMatch =
+      Math.abs(plan.goal.lat - goal.lat) < 1.0 &&
+      Math.abs(plan.goal.lon - goal.lon) < 1.0
+    return startMatch && goalMatch
+  }, [plan, origin, goal])
+
+  const displayRouteLine = useMemo(() => {
+    if (newLine && newLine.length > 1) return newLine
+    if (isPlanCurrent && planLine && planLine.length > 1) return planLine
+    if (origin?.lat != null && goal?.lat != null) {
+      return [
+        [origin.lat, origin.lon],
+        [goal.lat, goal.lon],
+      ]
+    }
+    return null
+  }, [newLine, isPlanCurrent, planLine, origin, goal])
+
   const endpoints = useMemo(
     () => [
       { ...origin, kind: 'origin' },
@@ -312,7 +345,7 @@ export default function RoutePlanner() {
           sicRaster={show.sic ? sic : null}
           uncertaintyRaster={show.unc ? unc : null}
           uncertaintyOpacity={0.55}
-          routeLine={newLine ?? planLine}
+          routeLine={displayRouteLine}
           routeLabel={reroute ? 'Re-planned route' : 'Recommended route'}
           priorLine={priorLine}
           priorLabel="Original route"

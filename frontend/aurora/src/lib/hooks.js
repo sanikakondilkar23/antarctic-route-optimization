@@ -91,8 +91,8 @@ export function useSicRaster(timestep, meta, { enabled = true } = {}) {
 
   const bounds = useMemo(() => boundsFromMetadata(meta), [meta])
   const url = useMemo(
-    () => (frame.decoded ? rasterToDataUrl(frame.decoded, { kind: 'sic' }) : null),
-    [frame.decoded]
+    () => (frame.decoded ? rasterToDataUrl(frame.decoded, { kind: 'sic', meta }) : null),
+    [frame.decoded, meta]
   )
 
   return {
@@ -131,15 +131,25 @@ export function useUncertaintyRaster(timestep, horizon = 0, meta, { enabled = tr
 
   const bounds = useMemo(() => {
     if (!meta) return null
+    if (frame.decoded && frame.decoded.nRows === meta.lat?.length && frame.decoded.nCols === meta.lon?.length) {
+      return boundsFromMetadata(meta)
+    }
     if (frame.raw?.model_band_rows && frame.raw?.model_band_cols) {
       return boundsForBand(meta, frame.raw.model_band_rows, frame.raw.model_band_cols)
     }
-    return boundsForBand(meta, meta.model_band_rows ?? [0, meta.lat?.length ?? 0], meta.model_band_cols ?? [0, meta.lon?.length ?? 0])
-  }, [meta, frame.raw])
+    return boundsFromMetadata(meta)
+  }, [meta, frame.raw, frame.decoded])
 
   const url = useMemo(
-    () => (frame.decoded ? rasterToDataUrl(frame.decoded, { kind: 'unc', vmax: frame.raw?.stats?.max ?? 1 }) : null),
-    [frame.decoded, frame.raw]
+    () =>
+      frame.decoded
+        ? rasterToDataUrl(frame.decoded, {
+            kind: 'unc',
+            vmax: frame.raw?.stats?.max ?? 1,
+            meta,
+          })
+        : null,
+    [frame.decoded, frame.raw, meta]
   )
 
   return {

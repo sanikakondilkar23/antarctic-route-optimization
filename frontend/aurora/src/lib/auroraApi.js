@@ -458,34 +458,88 @@ export const UNCERTAINTY_LEGEND = {
     'Forecast spread (1 sigma) from the committed uncertainty_2026.npy artifact. Higher = less confidence at that lead time.',
 }
 
+/* ------------------------------------------------------------------ */
+/* Web Mercator projection helpers for Leaflet ImageOverlay           */
+/* ------------------------------------------------------------------ */
+
+const MAX_LAT = 85.05112878
+const mercY = (lat) => {
+  const l = Math.max(-MAX_LAT, Math.min(MAX_LAT, lat))
+  return Math.log(Math.tan(Math.PI / 4 + (l * Math.PI) / 360))
+}
+const invMercY = (y) => ((2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180) / Math.PI
+
+const mercRatio = (latTop, latBot) =>
+  (mercY(latTop) - mercY(latBot)) / (((latTop - latBot) * Math.PI) / 180)
+
 /**
  * Rasterise a decoded frame to a PNG data URL for Leaflet's ImageOverlay.
  *
- * Invalid cells are fully transparent - never zero-filled, never coloured, so
- * the alpha channel is exactly the navigable/valid domain.
+ * Web Mercator re-sampling: The underlying SIC/uncertainty grid is evenly
+ * spaced in degrees (0.25 deg), but Leaflet's map is in Web Mercator
+ * (EPSG:3857) where latitude degrees expand towards the poles.
+ *
+ * In Leaflet's ImageOverlay, row 0 (y = 0, top of image) corresponds to the
+ * NORTHERN boundary (near Cape Town, lat ~ -32 deg), and the bottom row
+ * corresponds to the SOUTHERN boundary (Antarctica, lat ~ -75 deg).
+ * The grid has row 0 at lat -75 deg (South) and row nRows-1 at lat -32 deg (North).
+ * Resampling row-by-row in Mercator space maps the rows correctly so that:
+ * 1. North (Cape Town / open ocean) is at the top (no ice).
+ * 2. South (Antarctica / sea-ice pack) is at the bottom (sea ice).
+ * 3. Every cell aligns with real cartography (coastline, bathymetry, route).
+ *
+ * Invalid cells remain fully transparent (alpha = 0).
  */
-export function rasterToDataUrl(decoded, { kind = 'sic', vmax = 1 } = {}) {
+export function rasterToDataUrl(decoded, { kind = 'sic', vmax = 1, meta = null } = {}) {
   const { nRows, nCols, values, valid } = decoded
+  if (!nRows || !nCols) return null
+
+  const res = Number(meta?.resolution_deg ?? 0.25)
+  const latMin = meta?.lat?.length ? Math.min(meta.lat[0], meta.lat[meta.lat.length - 1]) : -75.0
+  const latMax = meta?.lat?.length ? Math.max(meta.lat[0], meta.lat[meta.lat.length - 1]) : -32.0
+  const latBot = latMin - res / 2
+  const latTop = latMax + res / 2
+
+  const yTop = mercY(latTop)
+  const yBot = mercY(latBot)
+  const ratio = mercRatio(latTop, latBot)
+  const outH = Math.max(2, Math.round(nRows * ratio))
+
+  const rowMap = new Int32Array(outH)
+  for (let j = 0; j < outH; j++) {
+    const y = yTop - ((j + 0.5) / outH) * (yTop - yBot)
+    const latVal = invMercY(y)
+    let r = Math.round((latVal - latMin) / res)
+    if (r < 0) r = 0
+    else if (r > nRows - 1) r = nRows - 1
+    rowMap[j] = r
+  }
+
   const canvas = document.createElement('canvas')
   canvas.width = nCols
-  canvas.height = nRows
+  canvas.height = outH
   const ctx = canvas.getContext('2d')
-  const img = ctx.createImageData(nCols, nRows)
+  const img = ctx.createImageData(nCols, outH)
   const data = img.data
 
-  for (let i = 0; i < nRows * nCols; i++) {
-    const o = i * 4
-    if (!valid[i]) {
-      data[o + 3] = 0
-      continue
+  for (let j = 0; j < outH; j++) {
+    const r = rowMap[j]
+    for (let ci = 0; ci < nCols; ci++) {
+      const srcIdx = r * nCols + ci
+      const dstIdx = (j * nCols + ci) * 4
+      if (!valid[srcIdx]) {
+        data[dstIdx + 3] = 0
+        continue
+      }
+      const t = values[srcIdx] / 255
+      const [red, green, blue] = kind === 'unc' ? uncColor(t, vmax) : sicColor(t)
+      data[dstIdx] = red
+      data[dstIdx + 1] = green
+      data[dstIdx + 2] = blue
+      data[dstIdx + 3] = kind === 'unc' ? 220 : sicAlpha(t)
     }
-    const t = values[i] / 255
-    const [r, g, b] = kind === 'unc' ? uncColor(t, vmax) : sicColor(t)
-    data[o] = r
-    data[o + 1] = g
-    data[o + 2] = b
-    data[o + 3] = kind === 'unc' ? 220 : sicAlpha(t)
   }
+
   ctx.putImageData(img, 0, 0)
   return canvas.toDataURL('image/png')
 }
@@ -494,7 +548,7 @@ export function rasterToDataUrl(decoded, { kind = 'sic', vmax = 1 } = {}) {
 /* Grid geometry                                                       */
 /* ------------------------------------------------------------------ */
 
-/** Leaflet ImageOverlay bounds [[north, west], [south, east]] from metadata. */
+/** Leaflet ImageOverlay bounds [[south, west], [north, east]] from metadata. */
 export function boundsFromMetadata(meta) {
   if (!meta?.lat?.length || !meta?.lon?.length) return null
   return rasterBounds(meta, 0, meta.lat.length, 0, meta.lon.length)
@@ -518,14 +572,18 @@ export function rasterBounds(meta, rowStart, rowEnd, colStart, colEnd) {
   const r1 = Math.min(meta.lat.length, rowEnd)
   const c0 = Math.max(0, colStart)
   const c1 = Math.min(meta.lon.length, colEnd)
-  const north = Number(meta.lat[r0]) - h
-  const south = Number(meta.lat[r1 - 1]) + h
-  const west = Number(meta.lon[c0]) - h
-  const east = Number(meta.lon[c1 - 1]) + h
+  const lat0 = Number(meta.lat[r0])
+  const lat1 = Number(meta.lat[r1 - 1])
+  const lon0 = Number(meta.lon[c0])
+  const lon1 = Number(meta.lon[c1 - 1])
+  const south = Math.min(lat0, lat1) - h
+  const north = Math.max(lat0, lat1) + h
+  const west = Math.min(lon0, lon1) - h
+  const east = Math.max(lon0, lon1) + h
   if ([north, south, west, east].some((v) => !Number.isFinite(v))) return null
   return [
-    [north, west],
-    [south, east],
+    [south, west],
+    [north, east],
   ]
 }
 
