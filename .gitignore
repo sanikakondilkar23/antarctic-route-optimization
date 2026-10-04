@@ -74,3 +74,5 @@ backend/cache/*.npy
 backend/cache/route_capetown_maitri_2026-01-06_5b.json
 backend/plots/route_validation_5b.png
 !models/iceberg/best_sar_iceberg_model.pt
+
+frontend/aurora/dist/
