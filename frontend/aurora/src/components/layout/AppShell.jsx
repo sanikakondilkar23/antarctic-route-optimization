@@ -7,19 +7,21 @@ import {
   Snowflake,
   Gauge,
   Server,
+  Compass,
 } from 'lucide-react'
 import Logo from '../ui/Logo'
 import { cn } from '../../lib/utils'
 import { fetchHealth } from '../../lib/auroraApi'
 import { useUtcClock } from '../../lib/hooks'
 
-export const NAV_ITEMS = [
-  { to: '/', label: 'Mission Control', icon: MapIcon, end: true },
+const NAV_ITEMS = [
+  { to: '/dashboard', label: 'Mission Control', icon: MapIcon },
   { to: '/route-planner', label: 'Route Planner', icon: Route },
   { to: '/sic-forecast', label: 'SIC Forecast', icon: Waves },
   { to: '/icebergs', label: 'Iceberg Intelligence', icon: Snowflake },
   { to: '/risk', label: 'Environmental Risk', icon: Gauge },
   { to: '/system', label: 'System', icon: Server },
+  { to: '/', label: 'Overview', icon: Compass },
 ]
 
 /** Live backend reachability. Never reported optimistically. */
@@ -72,35 +74,40 @@ function Clock() {
 
 export default function AppShell() {
   return (
-    <div className="flex h-screen min-h-[520px] flex-col overflow-hidden bg-graphite-900">
-      <header className="shrink-0 border-b border-graphite-600 bg-graphite-850">
+    <div className="flex h-screen min-h-[520px] flex-col overflow-hidden bg-[#05182B] text-[#EAF6FF]">
+      <header className="shrink-0 border-b border-white/10 bg-[#071D33]/90 backdrop-blur-xl shadow-md">
         {/* Brand + status */}
         <div className="flex items-center justify-between gap-4 px-4 py-2.5">
           <Link to="/" className="min-w-0 shrink-0" aria-label="AURORA home">
             <Logo />
           </Link>
           <div className="flex items-center gap-4">
-            <div className="hidden items-center gap-4 border-l border-graphite-600 pl-4 lg:flex">
+            <div className="hidden items-center gap-4 border-l border-white/10 pl-4 lg:flex">
               <BackendStatus />
-              <span className="mono-label hidden xl:inline">PROTOTYPE · NOT FOR NAVIGATION</span>
+              <span className="mono-label hidden xl:inline text-[#A9DFFF]/70">PROTOTYPE · NOT FOR NAVIGATION</span>
             </div>
             <Clock />
           </div>
         </div>
 
         {/* Primary navigation */}
-        <nav className="scrollbar-thin flex items-center gap-0.5 overflow-x-auto border-t border-graphite-700 px-2">
+        <nav className="scrollbar-thin flex items-center gap-1 overflow-x-auto border-t border-white/5 px-3 py-1 bg-[#05182B]/50">
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
-              className={({ isActive }) => cn(isActive ? 'nav-item-active' : 'nav-item')}
+              className={({ isActive }) =>
+                cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-semibold transition-all duration-200 flex items-center gap-2 whitespace-nowrap',
+                  isActive
+                    ? 'bg-[#22E5F0]/15 text-[#22E5F0] border border-[#22E5F0]/30 shadow-[0_0_12px_rgba(34,229,240,0.2)]'
+                    : 'text-mist hover:text-white hover:bg-white/5'
+                )
+              }
             >
-              <span className="inline-flex items-center gap-2">
-                <Icon size={14} className="shrink-0" />
-                {label}
-              </span>
+              <Icon size={14} className="shrink-0" />
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>

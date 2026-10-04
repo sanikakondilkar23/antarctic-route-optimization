@@ -56,13 +56,13 @@ export default function SignupPage() {
     setTimeout(() => {
       const res = signup({ fullName: form.fullName, email: form.email, organization: form.organization })
       setLoading(false)
-      if (res.ok) navigate('/overview')
+      if (res.ok) navigate('/dashboard')
     }, 700)
   }
 
   const fields = [
     { key: 'fullName', label: 'Full name', icon: UserIcon, type: 'text', placeholder: 'Dr. Jane Doe' },
-    { key: 'email', label: 'Email', icon: Mail, type: 'email', placeholder: 'you@example.org' },
+    { key: 'email', label: 'Email', icon: Mail, type: 'email', placeholder: 'you@naviglace.ai' },
     { key: 'organization', label: 'Organization', icon: Building2, type: 'text', placeholder: 'Research institution' },
     { key: 'password', label: 'Password', icon: Lock, type: 'password', placeholder: 'Min. 8 characters' },
     { key: 'confirm', label: 'Confirm password', icon: Lock, type: 'password', placeholder: 'Repeat password' },
@@ -118,7 +118,7 @@ export default function SignupPage() {
 
       <p className="mt-6 text-center text-sm text-mist">
         Already registered?{' '}
-        <Link to="/login" className="font-semibold text-ice hover:text-ice-bright">Sign in</Link>
+        <Link to="/login" className="font-semibold text-cyan hover:text-ice-cyan">Sign in</Link>
       </p>
     </AuthShell>
   )

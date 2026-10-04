@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Image as ImageIcon, Upload } from 'lucide-react'
+import { AlertTriangle, Image as ImageIcon, Upload, Eye } from 'lucide-react'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import PageHeader, { MetaItem } from '../components/ui/PageHeader'
 import { ErrorState, LoadingState } from '../components/ui/Status'
+import StandaloneModelHeader from '../components/layout/StandaloneModelHeader'
+import AboutModelBlock from '../components/layout/AboutModelBlock'
 import { detectIcebergs, fetchIcebergModel, fetchIcebergStatus } from '../lib/auroraApi'
 
 const SAMPLES = [
@@ -11,13 +13,6 @@ const SAMPLES = [
   '/samples/tile_y00000_x07616.jpg',
   '/samples/tile_y00000_x08960.jpg',
 ]
-
-/**
- * The last detection this browser session ran, kept in sessionStorage so the
- * evidence survives a navigation away and back. Only the backend's own response
- * is stored — never a reconstructed image, coordinate or confidence.
- */
-const LAST_RUN_KEY = 'aurora-last-iceberg-detection'
 
 function Row({ k, v, tone = '' }) {
   return (
@@ -30,9 +25,9 @@ function Row({ k, v, tone = '' }) {
 
 function Panel({ title, children, action, className = '' }) {
   return (
-    <section className={`border border-graphite-600 bg-graphite-850 ${className}`}>
-      <header className="flex items-center justify-between gap-2 border-b border-graphite-600 px-4 py-2.5">
-        <h2 className="eyebrow">{title}</h2>
+    <section className={`rounded-2xl border border-white/10 bg-[#071D33]/90 shadow-2xl backdrop-blur-xl overflow-hidden ${className}`}>
+      <header className="flex items-center justify-between gap-2 border-b border-white/10 bg-[#0A2A4A]/40 px-4 py-3">
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-[#22E5F0] font-bold">{title}</h2>
         {action}
       </header>
       <div className="px-4 py-3.5">{children}</div>
@@ -47,7 +42,6 @@ export default function IcebergIntelligence() {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [result, setResult] = useState(null)
-  const [restored, setRestored] = useState(null)
   const [busy, setBusy] = useState(false)
   const [detectError, setDetectError] = useState(null)
   const fileRef = useRef(null)
@@ -64,18 +58,6 @@ export default function IcebergIntelligence() {
     fetchIcebergModel()
       .then((d) => !cancelled && setModel({ data: d, error: null, loading: false }))
       .catch((e) => !cancelled && setModel({ data: null, error: e, loading: false }))
-    try {
-      const saved = sessionStorage.getItem(LAST_RUN_KEY)
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (parsed?.result) {
-          setResult(parsed.result)
-          setRestored({ fileName: parsed.fileName ?? null, conf: parsed.conf ?? null, at: parsed.at ?? null })
-        }
-      }
-    } catch {
-      /* storage unavailable — the page simply starts without a prior run */
-    }
     return () => {
       cancelled = true
     }
@@ -85,7 +67,6 @@ export default function IcebergIntelligence() {
     if (!f) return
     setFile(f)
     setResult(null)
-    setRestored(null)
     setDetectError(null)
     setPreview((prev) => {
       if (prev) URL.revokeObjectURL(prev)
@@ -106,15 +87,6 @@ export default function IcebergIntelligence() {
     try {
       const body = await detectIcebergs(file, conf)
       setResult(body)
-      setRestored(null)
-      try {
-        sessionStorage.setItem(
-          LAST_RUN_KEY,
-          JSON.stringify({ result: body, fileName: file.name, conf, at: new Date().toISOString() })
-        )
-      } catch {
-        /* storage full or blocked — the result still renders for this visit */
-      }
     } catch (err) {
       setResult(null)
       setDetectError(err?.message ?? 'Detection failed.')
@@ -127,43 +99,67 @@ export default function IcebergIntelligence() {
   const detections = useMemo(() => result?.detections ?? [], [result])
 
   return (
-    <div className="scrollbar-thin h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1440px] space-y-4 p-5">
-        <PageHeader
-          title="Iceberg Intelligence"
-          subtitle="SAR iceberg detection served by the AURORA backend. Detections are reported in image pixel space; this deployment cannot georeference them, so nothing is plotted on the Antarctic chart."
-          meta={
-            <>
-              <MetaItem label="MODEL" value={model.data?.model ?? '—'} />
-              <MetaItem label="PARAMS" value={model.data?.parameters ?? '—'} />
-              <MetaItem label="CONF" value={model.data?.confidence_threshold ?? '—'} />
-              <MetaItem label="IOU" value={model.data?.iou_threshold ?? '—'} />
-              <MetaItem label="DEVICE" value={model.data?.device ?? '—'} />
-            </>
-          }
-        />
+    <div className="flex h-full flex-col overflow-hidden bg-[#05182B]">
+      {/* Standalone Model 3 Header */}
+      <StandaloneModelHeader
+        currentModelId="model-3"
+        modelNumber="MODEL 03"
+        title="YOLOv8 SAR Iceberg Detection Tool"
+        subtitle="Sentinel-1 Satellite Radar Imagery Computer Vision Detection"
+        accentColor="text-[#A9DFFF]"
+        accentBorder="border-[#A9DFFF]/30"
+        accentBg="bg-[#A9DFFF]/10"
+        icon={Eye}
+      />
 
-        {/* ------------------------------- honest limitation banner */}
-        <div className="flex items-start gap-3 border border-warn/40 bg-warn/[0.07] px-4 py-3">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-warn">
-              Georeferencing unavailable — detections stay in pixel space
-            </p>
-            <p className="mt-1 text-[12px] leading-relaxed text-mist">
-              {geo?.message ?? 'No georeferencing metadata is attached to the SAR tiles.'} Unit:{' '}
-              <span className="font-mono">{geo?.unit ?? 'pixel'}</span>. Because{' '}
-              <span className="font-mono">location</span> is always null, AURORA never draws a map
-              marker, never reports a latitude/longitude, and never shows a trajectory for a
-              detection.
-            </p>
+      <div className="scrollbar-thin flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[1440px] space-y-4 p-5">
+          <PageHeader
+            title="Iceberg Intelligence"
+            subtitle="SAR iceberg detection served by the AURORA backend. Detections are reported in image pixel space; this deployment cannot georeference them, so nothing is plotted on the Antarctic chart."
+            meta={
+              <>
+                <MetaItem label="MODEL" value={model.data?.model ?? '—'} />
+                <MetaItem label="PARAMS" value={model.data?.parameters ?? '—'} />
+                <MetaItem label="CONF" value={model.data?.confidence_threshold ?? '—'} />
+                <MetaItem label="IOU" value={model.data?.iou_threshold ?? '—'} />
+                <MetaItem label="DEVICE" value={model.data?.device ?? '—'} />
+              </>
+            }
+          />
+
+          {/* ------------------------------- honest limitation banner */}
+          <div className="flex items-start gap-3 border border-warn/40 bg-warn/[0.07] px-4 py-3">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warn" />
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-warn">
+                Georeferencing unavailable — detections stay in pixel space
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-mist">
+                {geo?.message ?? 'No georeferencing metadata is attached to the SAR tiles.'} Unit:{' '}
+                <span className="font-mono">{geo?.unit ?? 'pixel'}</span>. Because{' '}
+                <span className="font-mono">location</span> is always null, AURORA never draws a map
+                marker, never reports a latitude/longitude, and never shows a trajectory for a
+                detection.
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
-          {/* ------------------------------- detector status */}
-          <div className="space-y-4">
-            <Panel title="Detector status" action={<Badge value={status.data?.model_status ?? '—'} />}>
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
+            {/* ------------------------------- detector status & about */}
+            <div className="space-y-4">
+              <AboutModelBlock
+                modelName="YOLOv8 SAR Iceberg Detector"
+                architecture="YOLOv8-nano Object Detection Neural Network (3,011,043 parameters)"
+                purpose="Scans Sentinel-1 Synthetic Aperture Radar (SAR) tiles to locate and bound floating iceberg targets in marine corridors."
+                inputs="SAR radar image tile (PNG/JPG, 640×640) and confidence threshold slider (default 0.25)."
+                outputs="Bounding boxes [x1, y1, x2, y2], detection count, and confidence scores in pixel coordinate space."
+                endpoint="POST /api/icebergs/detect"
+                checkpoint="models/iceberg/best_sar_iceberg_model.pt"
+                limitations="Detections are reported in pixel coordinate space because raw PNG tiles do not carry georeferencing affine transforms."
+              />
+
+              <Panel title="Detector status" action={<Badge value={status.data?.model_status ?? '—'} />}>
               {status.loading && <LoadingState label="Reading detector status" />}
               {status.error && <ErrorState title="Unavailable" message={status.error.message} />}
               {status.data && (
@@ -283,7 +279,7 @@ export default function IcebergIntelligence() {
               </div>
             )}
 
-            {!preview && !result && (
+            {!preview && (
               <div className="mt-4 flex flex-col items-center justify-center gap-2 border border-dashed border-graphite-600 px-6 py-12 text-center">
                 <ImageIcon size={22} className="text-steel" />
                 <p className="text-[13px] font-semibold text-white/85">No tile selected</p>
@@ -294,39 +290,11 @@ export default function IcebergIntelligence() {
               </div>
             )}
 
-            {restored && !preview && (
-              <div className="mt-3 border border-ice/30 bg-ice/[0.05] px-3.5 py-2.5">
-                <p className="text-[12px] leading-relaxed text-mist">
-                  Showing the last detection this browser session ran
-                  {restored.fileName ? (
-                    <>
-                      {' '}
-                      on <span className="font-mono text-white">{restored.fileName}</span>
-                    </>
-                  ) : null}
-                  {restored.at ? <> at <span className="font-mono text-white">{restored.at.slice(11, 19)} UTC</span></> : null}
-                  . The image itself is not retained, so only the backend's response is restored —
-                  the bounding boxes below are the original pixel values it returned.
-                </p>
-              </div>
-            )}
-
-            {(preview || result) && (
+            {preview && (
               <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,560px)_minmax(0,1fr)]">
-                <div className="relative min-h-[180px] overflow-hidden border border-graphite-600 bg-graphite-950">
-                  {preview ? (
-                    <img src={preview} alt="SAR tile" className="block w-full" />
-                  ) : (
-                    <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-2 px-6 py-8 text-center">
-                      <ImageIcon size={20} className="text-steel" />
-                      <p className="text-[12px] font-semibold text-white/85">Image not retained</p>
-                      <p className="max-w-xs text-[11.5px] leading-relaxed text-mist">
-                        Load a tile to re-run the detector and see the boxes over the image.
-                      </p>
-                    </div>
-                  )}
-                  {preview &&
-                    detections.map((d, i) => {
+                <div className="relative overflow-hidden border border-graphite-600 bg-graphite-950">
+                  <img src={preview} alt="SAR tile" className="block w-full" />
+                  {detections.map((d, i) => {
                     const [x1, y1, x2, y2] = d.bbox
                     const L = (x1 / result.image_width) * 100
                     const T = (y1 / result.image_height) * 100
@@ -414,5 +382,6 @@ export default function IcebergIntelligence() {
         </div>
       </div>
     </div>
-  )
+  </div>
+)
 }

@@ -1,69 +1,29 @@
-import { useEffect, useState } from 'react'
-import { Outlet, Navigate, useLocation } from 'react-router-dom'
+import { useState } from 'react'
+import { Outlet, Navigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopNav from './TopNav'
 import { useAuth } from '../../context/AuthContext'
-import { cn } from '../../lib/utils'
+import Disclaimer from '../ui/Disclaimer'
 
-const COLLAPSE_KEY = 'aurora-sidebar-collapsed'
-
-/**
- * Authenticated application shell.
- *
- * Fixed viewport height with a persistent left sidebar that collapses to an
- * icon rail on desktop and becomes an off-canvas drawer on mobile. `main` is
- * the scroll container, so a page may either take the full height itself (the
- * map workspaces do) or flow naturally and let the shell scroll.
- */
 export default function AppLayout() {
   const { user } = useAuth()
-  const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem(COLLAPSE_KEY) === '1'
-    } catch {
-      return false
-    }
-  })
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0')
-    } catch {
-      /* storage unavailable - collapse simply does not persist */
-    }
-  }, [collapsed])
-
-  // Any navigation closes the mobile drawer.
-  useEffect(() => {
-    setSidebarOpen(false)
-  }, [location.pathname])
-
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />
-  }
+  if (!user) return <Navigate to="/login" replace />
 
   return (
-    <div className="flex h-screen min-h-[520px] overflow-hidden bg-graphite-900 text-white">
-      <Sidebar
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed((c) => !c)}
-      />
-
-      <div
-        className={cn(
-          'flex min-w-0 flex-1 flex-col transition-[padding] duration-200',
-          collapsed ? 'lg:pl-[76px]' : 'lg:pl-72'
-        )}
-      >
+    <div className="min-h-screen bg-abyssal bg-abyssal-gradient text-white selection:bg-mint/30">
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <div className="flex min-h-screen flex-col lg:pl-72">
         <TopNav onMenu={() => setSidebarOpen(true)} />
-
-        <main className="scrollbar-thin relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-          <Outlet />
+        <main className="flex-1 px-4 py-6 md:px-6 lg:px-8">
+          <div className="mx-auto max-w-[1520px]">
+            <Outlet />
+          </div>
         </main>
+        <footer className="border-t border-white/10 px-4 py-4 md:px-6 lg:px-8 bg-abyssal-deck/40">
+          <Disclaimer />
+        </footer>
       </div>
     </div>
   )

@@ -25,33 +25,33 @@
 @layer components {
   /* --- Surfaces ------------------------------------------------------- */
   .panel {
-    @apply border border-graphite-600 bg-graphite-850 shadow-panel;
+    @apply rounded-2xl border border-white/10 bg-[#071D33]/90 shadow-2xl backdrop-blur-xl;
   }
   .panel-flat {
-    @apply border border-graphite-600 bg-graphite-800;
+    @apply rounded-xl border border-white/10 bg-[#071D33]/70 backdrop-blur-md;
   }
   .card {
-    @apply relative border border-graphite-600 bg-graphite-850 shadow-panel transition-colors duration-150;
+    @apply relative rounded-2xl border border-white/10 bg-[#071D33]/90 shadow-xl backdrop-blur-xl transition-all duration-200;
   }
   .card-hover {
-    @apply hover:border-graphite-500;
+    @apply hover:border-[#22E5F0]/40 hover:shadow-[0_4px_24px_rgba(34,229,240,0.15)] hover:-translate-y-0.5;
   }
   .card-tactical {
-    @apply border border-graphite-600 bg-graphite-850 shadow-overlay;
+    @apply rounded-xl border border-white/10 bg-[#05182B]/85 shadow-2xl backdrop-blur-xl;
   }
   .rule {
-    @apply border-graphite-600;
+    @apply border-white/10;
   }
 
   /* --- Typography helpers --------------------------------------------- */
   .eyebrow {
-    @apply text-[10px] font-semibold uppercase tracking-[0.18em] text-steel;
+    @apply text-[10px] font-mono font-semibold uppercase tracking-[0.18em] text-[#22E5F0];
   }
   .section-title {
-    @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-white/90;
+    @apply text-[12px] font-semibold uppercase tracking-[0.14em] text-white/95;
   }
   .mono-label {
-    @apply font-mono text-[10px] uppercase tracking-[0.14em] text-steel;
+    @apply font-mono text-[10px] uppercase tracking-[0.14em] text-mist;
   }
   .num {
     @apply font-mono tabular-nums;
@@ -59,36 +59,36 @@
 
   /* --- Form controls --------------------------------------------------- */
   .input {
-    @apply w-full rounded border border-graphite-600 bg-graphite-950 px-3 py-2 text-sm text-white placeholder:text-steel outline-none transition focus:border-ice-dim focus:ring-1 focus:ring-ice-dim/40 disabled:opacity-50;
+    @apply w-full rounded-xl border border-white/10 bg-[#05182B]/90 px-3.5 py-2.5 text-sm text-white placeholder:text-mist/60 outline-none transition focus:border-[#22E5F0] focus:ring-1 focus:ring-[#22E5F0]/40 disabled:opacity-50;
   }
   .input-label {
-    @apply mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
+    @apply mb-1.5 block text-[10px] font-mono font-semibold uppercase tracking-widest text-[#22E5F0];
   }
   .select {
-    @apply input appearance-none pr-8;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236E7881' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    @apply input appearance-none pr-9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2322E5F0' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 8px center;
+    background-position: right 10px center;
     background-size: 14px;
   }
 
   /* --- Buttons --------------------------------------------------------- */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded border border-ice-dim bg-ice-dim px-4 py-2 text-[13px] font-semibold text-graphite-950 transition hover:border-ice hover:bg-ice focus:outline-none focus:ring-2 focus:ring-ice/40 disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#22E5F0] to-[#3AA7FF] px-4 py-2.5 text-[13px] font-bold text-[#05182B] shadow-[0_0_20px_rgba(34,229,240,0.35)] transition-all duration-200 hover:shadow-[0_0_28px_rgba(34,229,240,0.55)] hover:scale-[1.01] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#22E5F0]/50 disabled:cursor-not-allowed disabled:opacity-45;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded border border-graphite-500 bg-graphite-750 px-4 py-2 text-[13px] font-semibold text-white transition hover:border-graphite-500 hover:bg-graphite-700 focus:outline-none focus:ring-2 focus:ring-ice/30 disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 hover:bg-white/10 hover:border-white/25 focus:outline-none focus:ring-2 focus:ring-[#22E5F0]/30 disabled:cursor-not-allowed disabled:opacity-45;
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded px-3 py-1.5 text-[13px] font-medium text-mist transition hover:bg-graphite-750 hover:text-white focus:outline-none disabled:opacity-45;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-[13px] font-medium text-mist transition-colors hover:bg-white/10 hover:text-white focus:outline-none disabled:opacity-45;
   }
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 rounded border border-danger/50 bg-danger/10 px-4 py-2 text-[13px] font-semibold text-danger transition hover:bg-danger/20;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-danger/50 bg-danger/10 px-4 py-2.5 text-[13px] font-semibold text-danger transition hover:bg-danger/20;
   }
 
   /* --- Chips, tags, nav ------------------------------------------------ */
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-sm border border-graphite-600 bg-graphite-800 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-mist;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-mist;
   }
   .nav-item {
     @apply relative whitespace-nowrap px-3 py-[7px] text-[13px] font-medium text-mist transition-colors hover:text-white;
@@ -98,16 +98,13 @@
   }
   .nav-item-active::after {
     content: '';
-    @apply absolute inset-x-3 -bottom-px h-[2px] bg-ice;
+    @apply absolute inset-x-3 -bottom-px h-[2px] bg-[#22E5F0];
   }
   .th {
-    @apply border-b border-graphite-600 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
-  }
-  .th-right {
-    @apply border-b border-graphite-600 px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-steel;
+    @apply border-b border-white/10 bg-[#0A2A4A]/30 px-3.5 py-2.5 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-[#22E5F0];
   }
   .td {
-    @apply px-3 py-2 text-[12px] text-white/85;
+    @apply px-3.5 py-2.5 text-[12px] text-white/90;
   }
 }
 
@@ -120,154 +117,270 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #133850;
+    background: #2a3138;
     border: 2px solid transparent;
     background-clip: content-box;
     border-radius: 8px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: #1E5274;
+    background: #39424b;
     background-clip: content-box;
-  }
-
-  /* --- AURORA motif: polar contour field + navigation grid ------------ */
-  .contour-field {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='860' height='860' viewBox='0 0 860 860'%3E%3Cg fill='none' stroke='%237FB4D4' stroke-opacity='0.075'%3E%3Cellipse cx='430' cy='430' rx='46' ry='34' transform='rotate(-14 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='92' ry='68' transform='rotate(-11 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='140' ry='104' transform='rotate(-8 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='190' ry='142' transform='rotate(-5 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='242' ry='182' transform='rotate(-2 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='296' ry='224' transform='rotate(1 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='352' ry='268' transform='rotate(4 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='410' ry='314' transform='rotate(7 430 430)'/%3E%3Cellipse cx='430' cy='430' rx='470' ry='362' transform='rotate(10 430 430)'/%3E%3C/g%3E%3C/svg%3E");
-    background-size: 860px 860px;
-    background-repeat: repeat;
-  }
-
-  .hairline-grid {
-    background-image: linear-gradient(rgba(127, 180, 212, 0.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(127, 180, 212, 0.045) 1px, transparent 1px);
-    background-size: 48px 48px;
-  }
-
-  .aurora-band {
-    background-image: linear-gradient(
-      100deg,
-      rgba(127, 180, 212, 0) 6%,
-      rgba(127, 180, 212, 0.14) 32%,
-      rgba(81, 128, 155, 0.2) 50%,
-      rgba(127, 180, 212, 0.06) 68%,
-      rgba(127, 180, 212, 0) 88%
-    );
-    background-size: 240% 100%;
-    animation: aurora-drift 22s ease-in-out infinite alternate;
-  }
-
-  @keyframes aurora-drift {
-    from {
-      background-position: 0% 50%;
-    }
-    to {
-      background-position: 100% 50%;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .aurora-band {
-      animation: none;
-    }
-  }
-
-  .fade-up {
-    animation: fade-up 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
-  }
-
-  @keyframes fade-up {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
   }
 }
 
 /* --------------------------------------------------------------------- */
 /* Leaflet - neutral charcoal chart theme                                */
 /* --------------------------------------------------------------------- */
+/* --------------------------------------------------------------------- */
+/* Leaflet - Antarctic Polar Nautical Chart Theme                        */
+/* --------------------------------------------------------------------- */
 .leaflet-container {
-  background: #040D15 !important;
+  background: #05182B !important;
   font-family: inherit;
   font-size: 12px;
   outline: none;
 }
 .leaflet-control-zoom a {
-  background: #0B2233 !important;
-  color: #c6d6e0 !important;
-  border: 1px solid #133850 !important;
-  border-radius: 3px !important;
-  width: 28px !important;
-  height: 28px !important;
-  line-height: 26px !important;
-  font-weight: 400 !important;
+  background: rgba(7, 29, 51, 0.9) !important;
+  color: #22E5F0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 8px !important;
+  width: 32px !important;
+  height: 32px !important;
+  line-height: 30px !important;
+  font-weight: 600 !important;
+  backdrop-filter: blur(12px) !important;
+  transition: all 0.2s ease !important;
 }
 .leaflet-control-zoom a:hover {
-  background: #0F2B41 !important;
+  background: rgba(10, 42, 74, 0.95) !important;
   color: #ffffff !important;
+  border-color: #22E5F0 !important;
+  box-shadow: 0 0 12px rgba(34, 229, 240, 0.3) !important;
 }
 .leaflet-control-zoom {
   border: none !important;
-  border-radius: 3px !important;
+  border-radius: 8px !important;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45) !important;
-  gap: 0;
+  box-shadow: 0 4px 20px rgba(5, 24, 43, 0.7) !important;
+  gap: 4px;
+  display: flex;
+  flex-direction: column;
 }
 .leaflet-bar {
   border: none !important;
 }
 .leaflet-control-attribution {
-  background: rgba(4, 13, 21, 0.86) !important;
-  color: #5a636b !important;
-  font-size: 9px !important;
-  padding: 1px 6px !important;
-  border-top-left-radius: 2px;
+  background: rgba(5, 24, 43, 0.88) !important;
+  color: #A9DFFF !important;
+  font-size: 9.5px !important;
+  padding: 3px 8px !important;
+  border-top-left-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+  border-right: none;
+  backdrop-filter: blur(8px) !important;
 }
 .leaflet-control-attribution a {
-  color: #6e7881 !important;
+  color: #22E5F0 !important;
 }
 .leaflet-popup-content-wrapper {
-  background: #0B2233 !important;
-  color: #e9ecef !important;
-  border-radius: 4px !important;
-  border: 1px solid #133850 !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+  background: rgba(7, 29, 51, 0.95) !important;
+  color: #EAF6FF !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(34, 229, 240, 0.35) !important;
+  box-shadow: 0 16px 36px rgba(5, 24, 43, 0.85), 0 0 20px rgba(34, 229, 240, 0.12) !important;
+  backdrop-filter: blur(16px) !important;
 }
 .leaflet-popup-tip {
-  background: #0B2233 !important;
-  border: 1px solid #133850 !important;
+  background: #071D33 !important;
+  border: 1px solid rgba(34, 229, 240, 0.35) !important;
 }
 .leaflet-popup-content {
-  margin: 10px 12px !important;
+  margin: 12px 14px !important;
   font-size: 12px;
 }
 .leaflet-container a.leaflet-popup-close-button {
-  color: #6e7881 !important;
+  color: #98A1A9 !important;
+  top: 8px !important;
+  right: 8px !important;
+}
+.leaflet-container a.leaflet-popup-close-button:hover {
+  color: #22E5F0 !important;
 }
 .leaflet-tooltip {
-  background: #0A1C2B !important;
-  border: 1px solid #133850 !important;
-  border-radius: 3px !important;
-  color: #e9ecef !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4) !important;
+  background: rgba(5, 24, 43, 0.94) !important;
+  border: 1px solid rgba(34, 229, 240, 0.35) !important;
+  border-radius: 8px !important;
+  color: #EAF6FF !important;
+  box-shadow: 0 8px 24px rgba(5, 24, 43, 0.75) !important;
   font-size: 11px;
+  backdrop-filter: blur(12px) !important;
+  padding: 4px 8px !important;
 }
 .leaflet-tooltip-top::before {
-  border-top-color: #133850 !important;
+  border-top-color: #05182B !important;
 }
 .leaflet-tooltip-bottom::before {
-  border-bottom-color: #133850 !important;
+  border-bottom-color: #05182B !important;
 }
 .leaflet-tooltip-left::before {
-  border-left-color: #133850 !important;
+  border-left-color: #05182B !important;
 }
 .leaflet-tooltip-right::before {
-  border-right-color: #133850 !important;
+  border-right-color: #05182B !important;
 }
 .leaflet-container img.leaflet-tile {
-  filter: saturate(0.55) brightness(0.86) contrast(1.04);
+  filter: saturate(0.65) brightness(0.9) contrast(1.05);
+}
+
+/* --------------------------------------------------------------------- */
+/* Cinematic Glassmorphism & Polar AI Effects                            */
+/* --------------------------------------------------------------------- */
+.glass-panel {
+  background: rgba(7, 29, 51, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(169, 223, 255, 0.14);
+}
+
+.glass-panel-elevated {
+  background: rgba(7, 29, 51, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(34, 229, 240, 0.22);
+  box-shadow: 0 16px 40px rgba(5, 24, 43, 0.65), 0 0 20px rgba(34, 229, 240, 0.08);
+}
+
+.glass-card {
+  background: linear-gradient(145deg, rgba(7, 29, 51, 0.8) 0%, rgba(10, 42, 74, 0.45) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(169, 223, 255, 0.12);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  border-color: rgba(34, 229, 240, 0.45);
+  box-shadow: 0 12px 30px rgba(5, 24, 43, 0.6), 0 0 25px rgba(34, 229, 240, 0.15);
+  transform: translateY(-3px);
+}
+
+.glass-chip {
+  background: rgba(10, 42, 74, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(169, 223, 255, 0.2);
+}
+
+/* --------------------------------------------------------------------- */
+/* Hero Route Overlay Animations                                         */
+/* --------------------------------------------------------------------- */
+@keyframes dash-flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -48;
+  }
+}
+
+@keyframes hazard-pulse {
+  0% {
+    r: 14;
+    opacity: 0.9;
+    stroke-width: 2;
+  }
+  50% {
+    r: 28;
+    opacity: 0.1;
+    stroke-width: 1;
+  }
+  100% {
+    r: 14;
+    opacity: 0.9;
+    stroke-width: 2;
+  }
+}
+
+@keyframes hazard-pulse-inner {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes float-pin {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes waypoint-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 4px rgba(34, 229, 240, 0.7));
+  }
+  50% {
+    filter: drop-shadow(0 0 10px rgba(34, 229, 240, 1));
+  }
+}
+
+@keyframes soft-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+.route-dash-animated {
+  animation: dash-flow 2.2s linear infinite;
+}
+
+.hazard-ring-animated {
+  transform-origin: center;
+  animation: hazard-pulse 2.6s cubic-bezier(0.2, 0.8, 0.4, 1) infinite;
+}
+
+.hazard-center-animated {
+  transform-origin: center;
+  animation: hazard-pulse-inner 2s ease-in-out infinite;
+}
+
+.dest-pin-animated {
+  animation: float-pin 3.2s ease-in-out infinite;
+}
+
+.waypoint-node {
+  animation: waypoint-glow 3s ease-in-out infinite;
+}
+
+.ambient-glow {
+  animation: soft-pulse 4s ease-in-out infinite;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+    scroll-behavior: auto !important;
+  }
+  .route-dash-animated,
+  .hazard-ring-animated,
+  .hazard-center-animated,
+  .dest-pin-animated,
+  .waypoint-node,
+  .ambient-glow {
+    animation: none !important;
+  }
 }

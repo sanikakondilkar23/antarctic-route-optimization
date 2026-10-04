@@ -109,8 +109,11 @@ export default function MissionControl() {
           onCursor={setCursor}
         />
         {sic.loading && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-[500] -translate-x-1/2 border border-graphite-600 bg-graphite-850 px-3 py-1.5">
-            <span className="mono-label">DECODING SIC FRAME…</span>
+          <div className="pointer-events-none absolute left-1/2 top-[68px] z-[500] -translate-x-1/2 rounded-xl border border-[#22E5F0]/40 bg-[#05182B]/90 px-3.5 py-1.5 shadow-xl backdrop-blur-md">
+            <span className="mono-label text-[#22E5F0] flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-[#22E5F0] animate-pulse" />
+              DECODING POLAR SIC FRAME (EPSG:3031)…
+            </span>
           </div>
         )}
       </div>
@@ -122,7 +125,7 @@ export default function MissionControl() {
         <FloatPanel
           title="Map layers"
           action={<Layers size={13} className="text-steel" />}
-          className="lg:absolute lg:left-3 lg:top-3 lg:z-10 lg:w-[272px]"
+          className="lg:absolute lg:left-3 lg:top-[64px] lg:z-10 lg:w-[272px]"
         >
           <div className="space-y-1.5">
             {LAYER_ROWS.map((row) => {
@@ -260,10 +263,10 @@ export default function MissionControl() {
               </p>
               <Link
                 to="/route-planner"
-                className="mt-2.5 inline-flex items-center gap-1.5 border border-graphite-500 bg-graphite-750 px-2.5 py-1.5 text-[12px] font-medium text-white transition hover:bg-graphite-700"
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#22E5F0] to-[#3AA7FF] px-3.5 py-2 text-[12px] font-bold text-[#05182B] shadow-[0_0_16px_rgba(34,229,240,0.3)] transition-all hover:shadow-[0_0_24px_rgba(34,229,240,0.5)] hover:scale-[1.02]"
               >
-                <RouteIcon size={13} className="text-ice" /> Plan a new route
-                <ChevronRight size={13} />
+                <RouteIcon size={14} /> <span>Plan a new route</span>
+                <ChevronRight size={14} />
               </Link>
             </>
           )}
@@ -278,12 +281,12 @@ export default function MissionControl() {
         >
           <LineLegend
             items={[
-              { label: 'Committed baseline route', color: '#A8CFE6' },
-              { label: 'Station / staging port marker', color: '#A8CFE6', width: 2 },
+              { label: 'Committed baseline route', color: '#22E5F0' },
+              { label: 'Station / staging port marker', color: '#A9DFFF', width: 2 },
             ]}
           />
-          {on.sic_mean && <SicLegend className="mt-2.5 border-t border-graphite-700 pt-2.5" />}
-          <div className="mt-2.5 border-t border-graphite-700 pt-2">
+          {on.sic_mean && <SicLegend className="mt-2.5 border-t border-white/10 pt-2.5" />}
+          <div className="mt-2.5 border-t border-white/10 pt-2">
             <CoordReadout cursor={cursor} />
           </div>
         </FloatPanel>

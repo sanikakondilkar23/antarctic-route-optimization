@@ -60,7 +60,7 @@ export default function MapExplorer() {
     { key: 'trajectories', label: 'Forecast Drift Cones', icon: Compass, color: 'bg-danger' },
     { key: 'stations', label: 'Research Stations', icon: MapPin, color: 'bg-safe' },
     { key: 'routes', label: 'Navigation Routes', icon: Route, color: 'bg-cyan' },
-    { key: 'seaIce', label: 'Sea-Ice Concentration', icon: Waves, color: 'bg-ice' },
+    { key: 'seaIce', label: 'Sea-Ice Concentration', icon: Waves, color: 'bg-ice-cyan' },
     { key: 'wind', label: 'Wind Field Vectors', icon: Wind, color: 'bg-warn' },
     { key: 'oceanCurrents', label: 'Ocean Currents (ACC & Coastal)', icon: Waves, color: 'bg-cyan' },
   ]
@@ -199,7 +199,7 @@ export default function MapExplorer() {
               {/* Sea-ice symbology comes from the SIC API, not from this file. */}
               <div className="border-t border-white/10 pt-2">
                 <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-mist">
-                  <Waves size={11} className="text-ice" />
+                  <Waves size={11} className="text-ice-cyan" />
                   Sea-Ice Concentration — ConvLSTM
                 </p>
                 {sic.status === 'loading' ? (

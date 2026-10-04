@@ -34,7 +34,7 @@ export default function DataSources() {
 
   const categoryMeta = {
     'Satellite Data': { icon: Satellite, count: datasets.filter((d) => d.category === 'Satellite Data').length, tone: 'text-cyan bg-cyan/10' },
-    'Oceanographic Data': { icon: Waves, count: datasets.filter((d) => d.category === 'Oceanographic Data').length, tone: 'text-ice bg-ocean/30' },
+    'Oceanographic Data': { icon: Waves, count: datasets.filter((d) => d.category === 'Oceanographic Data').length, tone: 'text-ice-cyan bg-ocean/30' },
     'Meteorological Data': { icon: Wind, count: datasets.filter((d) => d.category === 'Meteorological Data').length, tone: 'text-ice bg-ice/10' },
     'Vessel Data': { icon: Target, count: datasets.filter((d) => d.category === 'Vessel Data').length, tone: 'text-safe bg-safe/10' },
   }

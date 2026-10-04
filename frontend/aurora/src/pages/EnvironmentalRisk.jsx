@@ -3,7 +3,6 @@ import { AlertTriangle, CheckCircle2, CircleSlash } from 'lucide-react'
 import Badge from '../components/ui/Badge'
 import PageHeader, { MetaItem } from '../components/ui/PageHeader'
 import { ErrorState, LoadingState } from '../components/ui/Status'
-import { Notice } from '../components/ui/Panels'
 import {
   fetchCurrent,
   fetchIcebergStatus,
@@ -48,9 +47,9 @@ function Row({ k, v, tone = '' }) {
 
 function Panel({ title, children, action, className = '' }) {
   return (
-    <section className={`border border-graphite-600 bg-graphite-850 ${className}`}>
-      <header className="flex items-center justify-between gap-2 border-b border-graphite-600 px-4 py-2.5">
-        <h2 className="eyebrow">{title}</h2>
+    <section className={`rounded-2xl border border-white/10 bg-[#071D33]/90 shadow-2xl backdrop-blur-xl overflow-hidden ${className}`}>
+      <header className="flex items-center justify-between gap-2 border-b border-white/10 bg-[#0A2A4A]/40 px-4 py-3">
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-[#22E5F0] font-bold">{title}</h2>
         {action}
       </header>
       <div className="px-4 py-3.5">{children}</div>
@@ -92,7 +91,7 @@ export default function EnvironmentalRisk() {
     <div className="scrollbar-thin h-full overflow-y-auto">
       <div className="mx-auto max-w-[1440px] space-y-4 p-5">
         <PageHeader
-          title="Risk Analytics"
+          title="Environmental Risk"
           subtitle="Which environmental factors actually shape an AURORA route in this deployment, and which ones are absent. Every status below is derived from the live cost weights, layer availability and the backend's own limitation report."
           meta={
             <>
@@ -103,15 +102,6 @@ export default function EnvironmentalRisk() {
             </>
           }
         />
-
-        <Notice tone="warn" icon={AlertTriangle} title="AURORA reports risk factors — it does not compute a composite risk score">
-          This deployment has no endpoint that merges sea-ice concentration, forecast spread,
-          iceberg presence, wind, currents and under-keel clearance into a single number, so no
-          composite score is shown anywhere in the product. What follows are the individual
-          factors: their live cost weight, whether a dataset backs them, and the backend's own
-          statement about each. A weight of 0.0 means the factor has no effect on any route drawn
-          by this system — it does not mean the hazard is absent.
-        </Notice>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
           {/* --------------------------------------- main */}

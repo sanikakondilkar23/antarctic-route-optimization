@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Activity, Boxes, ChevronDown, Info, LogOut, Menu, Moon, Settings, Sun } from 'lucide-react'
+import { ChevronDown, LogOut, Menu, Moon, Sun, User, Activity } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useTheme } from '../../context/ThemeContext'
 import { fetchHealth } from '../../lib/auroraApi'
@@ -85,13 +85,6 @@ export default function TopNav({ onMenu }) {
           {online ? 'backend online' : 'backend offline'}
         </span>
 
-        <span
-          className="hidden rounded-xl border border-warn/30 bg-warn/10 px-3 py-1.5 font-mono text-[11px] text-warn xl:inline-flex"
-          title="AURORA is a research prototype. Not for navigation."
-        >
-          PROTOTYPE · NOT FOR NAVIGATION
-        </span>
-
         <div className="hidden rounded-xl border border-white/10 bg-abyssal/60 px-3 py-1 font-mono text-[11px] text-mist sm:block">
           <span className="font-bold text-white/90">{utc}</span>
         </div>
@@ -133,31 +126,17 @@ export default function TopNav({ onMenu }) {
                 </p>
               </div>
               <Link
-                to="/models"
+                to="/system-status"
                 className="flex items-center gap-2 px-3 py-2 text-xs text-mist hover:bg-white/5 hover:text-white"
                 onClick={() => setProfileOpen(false)}
               >
-                <Boxes size={14} /> Models
-              </Link>
-              <Link
-                to="/about"
-                className="flex items-center gap-2 px-3 py-2 text-xs text-mist hover:bg-white/5 hover:text-white"
-                onClick={() => setProfileOpen(false)}
-              >
-                <Info size={14} /> About AURORA
-              </Link>
-              <Link
-                to="/settings"
-                className="flex items-center gap-2 px-3 py-2 text-xs text-mist hover:bg-white/5 hover:text-white"
-                onClick={() => setProfileOpen(false)}
-              >
-                <Settings size={14} /> Settings
+                <User size={14} /> System status
               </Link>
               <button
                 className="flex w-full items-center gap-2 px-3 py-2 text-xs text-danger hover:bg-danger/10"
                 onClick={() => {
                   logout()
-                  navigate('/login', { replace: true })
+                  navigate('/')
                 }}
               >
                 <LogOut size={14} /> Sign out

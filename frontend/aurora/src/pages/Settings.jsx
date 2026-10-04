@@ -24,7 +24,7 @@ export default function Settings() {
 
   const [profile, setProfile] = useState({
     name: user?.name ?? 'Admin User',
-    email: user?.email ?? 'admin@aurora.local',
+    email: user?.email ?? 'admin@naviglace.ai',
     organization: user?.organization ?? 'NCPOR (Demo)',
     role: user?.role ?? 'Operations Officer',
   })

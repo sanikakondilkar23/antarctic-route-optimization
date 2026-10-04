@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Route, Waves, Eye, ShieldCheck, Compass } from 'lucide-react'
 import AntarcticMap from '../components/map/AntarcticMap'
-import { CoordReadout, FloatPanel, LayerRow, LineLegend, SicLegend } from '../components/map/MapUi'
+import {
+  CoordReadout,
+  FloatPanel,
+  LayerManagerPanel,
+  LegendPanel,
+  LineLegend,
+  SicLegend,
+} from '../components/map/MapUi'
+import { cn } from '../lib/utils'
 import PlannerForm from '../components/planner/PlannerForm'
 import RouteResult from '../components/planner/RouteResult'
 import RerouteFlow from '../components/planner/RerouteFlow'
@@ -8,7 +17,6 @@ import { ErrorState, LoadingState } from '../components/ui/Status'
 import {
   ROUTE_POINTS,
   fetchLimitations,
-  fetchRouteProfile,
   fetchSicSlice,
   optimizeRoute,
   pathToLatLngs,
@@ -85,8 +93,39 @@ export default function RoutePlanner() {
     }
   }, [])
 
-  /* ---------------------------------------------------------- chart */
-  const [show, setShow] = useState({ base: true, coast: true, stations: true, sic: true, unc: false })
+  /* ---------------------------------------------------------- chart layers */
+  const [show, setShow] = useState({
+    enc: true,
+    coast: true,
+    graticule: true,
+    corridor: true,
+    stations: true,
+    sic: true,
+    unc: false,
+    drift: true,
+    icebergs: true,
+    alt_routes: true,
+    route: true,
+    alarms: true,
+  })
+  const [opacities, setOpacities] = useState({
+    enc: 1.0,
+    coast: 1.0,
+    graticule: 1.0,
+    corridor: 1.0,
+    stations: 1.0,
+    sic: 1.0,
+    unc: 1.0,
+    drift: 1.0,
+    icebergs: 1.0,
+    alt_routes: 0.9,
+    route: 1.0,
+    alarms: 1.0,
+  })
+
+  const handleToggleLayer = (key) => setShow((s) => ({ ...s, [key]: !s[key] }))
+  const handleOpacityChange = (key, val) => setOpacities((o) => ({ ...o, [key]: val }))
+
   const sic = useSicRaster(timestep, meta.data, { enabled: show.sic })
   const unc = useUncertaintyRaster(timestep, 0, meta.data, { enabled: show.unc })
   const [cursor, setCursor] = useState(null)
@@ -127,46 +166,11 @@ export default function RoutePlanner() {
     }
   }, [origin, goal, timestep, snap, meta.data])
 
-  // Automatically re-plan route whenever origin, goal, timestep, or snap changes
-  useEffect(() => {
-    if (!meta.data) return
-    const timer = setTimeout(() => {
-      handlePlan()
-    }, 250)
-    return () => clearTimeout(timer)
-  }, [origin.lat, origin.lon, goal.lat, goal.lon, timestep, snap, meta.data, handlePlan])
-
-  /* ------------------------------------------ route SIC profile */
-  // GET /api/route/profile/<t> sampled at the exact cells the optimizer
-  // returned, so the statistics below describe the route on the chart.
-  const [profile, setProfile] = useState({ data: null, error: null, loading: false })
-  useEffect(() => {
-    let cancelled = false
-    const startCell = plan?.start?.cell
-    const goalCell = plan?.goal?.cell
-    if (!Array.isArray(startCell) || !Array.isArray(goalCell)) {
-      setProfile({ data: null, error: null, loading: false })
-      return undefined
-    }
-    setProfile((p) => ({ ...p, loading: true }))
-    fetchRouteProfile(plan.timestep, {
-      startRow: startCell[0],
-      startCol: startCell[1],
-      goalRow: goalCell[0],
-      goalCol: goalCell[1],
-    })
-      .then((d) => !cancelled && setProfile({ data: d, error: null, loading: false }))
-      .catch((e) => !cancelled && setProfile({ data: null, error: e, loading: false }))
-    return () => {
-      cancelled = true
-    }
-  }, [plan])
-
   /* ---------------------------------------------------------- reroute */
   const [reroute, setReroute] = useState(null)
   const [rerouteBusy, setRerouteBusy] = useState(false)
   const [rerouteError, setRerouteError] = useState(null)
-  const [supported, setSupported] = useState(null) // null | 'ok' | 'unavailable'
+  const [supported, setSupported] = useState(null)
   const [target, setTarget] = useState(null)
 
   const targetOptions = useMemo(() => {
@@ -224,206 +228,217 @@ export default function RoutePlanner() {
     }
   }, [plan, target])
 
-  /* ---------------------------------------------------------- lines */
-  const planLine = useMemo(
-    () => (plan?.path && meta.data ? pathToLatLngs(meta.data, plan.path) : null),
-    [plan, meta.data]
-  )
-  const priorLine = useMemo(
-    () => (reroute?.updated_route?.path && meta.data ? pathToLatLngs(meta.data, plan.path) : null),
-    [reroute, plan, meta.data]
-  )
-  const newLine = useMemo(
-    () =>
-      reroute?.updated_route?.path && meta.data
-        ? pathToLatLngs(meta.data, reroute.updated_route.path)
-        : null,
-    [reroute, meta.data]
-  )
+  /* -------------------------------------------- map line coordinates */
+  const planLine = useMemo(() => {
+    if (!plan?.path || !meta.data) return null
+    return pathToLatLngs(meta.data, plan.path)
+  }, [plan, meta.data])
 
-  // Checks if the computed plan matches the currently selected origin and goal
-  const isPlanCurrent = useMemo(() => {
-    if (!plan?.start || !plan?.goal) return false
-    const startMatch =
-      Math.abs(plan.start.lat - origin.lat) < 1.0 &&
-      Math.abs(plan.start.lon - origin.lon) < 1.0
-    const goalMatch =
-      Math.abs(plan.goal.lat - goal.lat) < 1.0 &&
-      Math.abs(plan.goal.lon - goal.lon) < 1.0
-    return startMatch && goalMatch
-  }, [plan, origin, goal])
+  const newLine = useMemo(() => {
+    if (!reroute?.path || !meta.data) return null
+    return pathToLatLngs(meta.data, reroute.path)
+  }, [reroute, meta.data])
 
-  const displayRouteLine = useMemo(() => {
-    if (newLine && newLine.length > 1) return newLine
-    if (isPlanCurrent && planLine && planLine.length > 1) return planLine
-    if (origin?.lat != null && goal?.lat != null) {
-      return [
-        [origin.lat, origin.lon],
-        [goal.lat, goal.lon],
-      ]
-    }
-    return null
-  }, [newLine, isPlanCurrent, planLine, origin, goal])
+  const priorLine = useMemo(() => {
+    if (!reroute || !planLine) return null
+    return planLine
+  }, [reroute, planLine])
 
-  const endpoints = useMemo(
-    () => [
-      { ...origin, kind: 'origin' },
-      { ...goal, kind: 'destination' },
-    ],
-    [origin, goal]
-  )
+  const endpoints = useMemo(() => {
+    const list = []
+    if (origin) list.push({ ...origin, kind: 'origin' })
+    if (goal) list.push({ ...goal, kind: 'goal' })
+    return list
+  }, [origin, goal])
 
-  const canPlan =
-    Math.abs(origin.lat - goal.lat) > 1e-6 || Math.abs(origin.lon - goal.lon) > 1e-6
+  const canPlan = !busy && origin != null && goal != null
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-      {/* ------------------------------------------------ left rail */}
-      <aside className="scrollbar-thin order-2 w-full shrink-0 space-y-2 border-t border-graphite-600 bg-graphite-900 p-2 lg:order-1 lg:w-[396px] lg:overflow-y-auto lg:border-r lg:border-t-0">
-        <PlannerForm
-          metadata={meta.data}
-          layersData={layers.data}
-          layersLoading={layers.loading}
-          origin={origin}
-          originPreset={originPreset}
-          onOriginPreset={applyPreset('origin')}
-          goal={goal}
-          goalPreset={goalPreset}
-          onGoalPreset={applyPreset('goal')}
-          pickMode={pickMode}
-          setPickMode={setPickMode}
-          timestep={timestep}
-          setTimestep={setTimestep}
-          snap={snap}
-          setSnap={setSnap}
-          onPlan={handlePlan}
-          busy={busy}
-          planError={planError}
-          canPlan={canPlan}
-        />
+    <div className="flex h-full flex-col overflow-hidden bg-[#05182B] text-slate-100">
+      <div className="grid h-full min-h-0 grid-cols-1 gap-2 p-2 lg:grid-cols-[18rem_minmax(0,1fr)_22rem]">
+        {/* LEFT: LAYERS panel */}
+        <aside className="order-2 flex min-h-0 flex-col gap-2 overflow-y-auto lg:order-1 scrollbar-thin">
+          <FloatPanel
+            title="LAYERS"
+            action={<span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-[#22E5F0]">14</span>}
+            className="flex-1"
+          >
+            <LayerManagerPanel
+              layers={show}
+              opacities={opacities}
+              onToggle={handleToggleLayer}
+              onOpacityChange={handleOpacityChange}
+              sicAwaitingData={!meta.data}
+            />
+          </FloatPanel>
+        </aside>
 
-        {planError && !plan && (
-          <ErrorState title="Route request rejected" message={planError} />
-        )}
-
-        <RouteResult plan={plan} limitations={limitations} layersData={layers.data} profile={profile} />
-
-        <RerouteFlow
-          plan={plan}
-          reroute={reroute}
-          busy={rerouteBusy}
-          error={rerouteError}
-          supported={supported === 'unavailable' ? 'unavailable' : 'ready'}
-          targetOptions={targetOptions}
-          target={target}
-          setTarget={setTarget}
-          frameOrigin={frames.origin}
-          frameTarget={frames.target}
-          costWeights={plan?.cost_weights ?? layers.data?.cost_weights ?? null}
-          onRun={handleReroute}
-        />
-
-        <div className="border border-graphite-600 bg-graphite-850 px-3 py-2.5">
-          <p className="mono-label">Source</p>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-mist">
-            Routing runs in the AURORA backend (A* over the real SIC field with the GEBCO land
-            mask). This client only chooses inputs and renders what comes back.
-          </p>
-        </div>
-      </aside>
-
-      {/* ------------------------------------------------ chart */}
-      <div className="relative order-1 flex-1 lg:order-2 lg:min-h-0">
-        <div className="relative h-[54vh] w-full lg:absolute lg:inset-0 lg:h-full">
-        <AntarcticMap
-          className="absolute inset-0"
-          meta={meta.data}
-          coastline={show.coast ? coastline : null}
-          showBaseTiles={show.base}
-          showCoastline={show.coast}
-          showStations={show.stations}
-          sicRaster={show.sic ? sic : null}
-          uncertaintyRaster={show.unc ? unc : null}
-          uncertaintyOpacity={0.55}
-          routeLine={displayRouteLine}
-          routeLabel={reroute ? 'Re-planned route' : 'Recommended route'}
-          priorLine={priorLine}
-          priorLabel="Original route"
-          endpoints={endpoints}
-          pickMode={pickMode}
-          onPick={onPick}
-          onCursor={setCursor}
-        />
-
-        {pickMode && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-[500] -translate-x-1/2 border border-ice/50 bg-graphite-850 px-3 py-1.5">
-            <span className="text-[12px] text-ice">
-              Set {pickMode === 'origin' ? 'origin' : 'destination'} — click the chart
-            </span>
-          </div>
-        )}
-
-        {sic.loading && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-[500] -translate-x-1/2 border border-graphite-600 bg-graphite-850 px-3 py-1.5">
-            <span className="mono-label">DECODING SIC FRAME…</span>
-          </div>
-        )}
-        </div>
-
-        <FloatPanel
-          title="Chart layers"
-          className="relative z-[500] mb-2 w-full lg:absolute lg:right-3 lg:top-3 lg:mb-0 lg:w-[236px]"
-          bodyClass="px-3 py-2"
-        >
-          <LayerRow checked={show.base} onChange={(v) => setShow((s) => ({ ...s, base: v }))} label="Base map" />
-          <LayerRow checked={show.coast} onChange={(v) => setShow((s) => ({ ...s, coast: v }))} label="Coastline" />
-          <LayerRow
-            checked={show.sic}
-            onChange={(v) => setShow((s) => ({ ...s, sic: v }))}
-            label="Sea-ice concentration"
-            status="REAL"
+        {/* CENTER: Large continuous Antarctic polar map */}
+        <div className="relative order-1 flex min-h-[450px] flex-col lg:order-2 lg:h-full lg:min-h-0">
+          <AntarcticMap
+            className="absolute inset-0"
+            meta={meta.data}
+            coastline={show.coast ? coastline : null}
+            showBaseTiles={show.enc}
+            showCoastline={show.coast}
+            coastlineOpacity={opacities.coast}
+            showGraticule={show.graticule}
+            graticuleOpacity={opacities.graticule}
+            showCorridor={show.corridor}
+            corridorOpacity={opacities.corridor}
+            showStations={show.stations}
+            showIcebergs={show.icebergs}
+            showWaypoints={show.route}
+            sicRaster={show.sic ? sic : null}
+            sicOpacity={opacities.sic}
+            uncertaintyRaster={show.unc ? unc : null}
+            uncertaintyOpacity={opacities.unc}
+            routeLine={show.route ? (newLine ?? planLine) : null}
+            routeLabel={reroute ? 'Re-planned route' : 'Recommended route'}
+            priorLine={show.alt_routes ? priorLine : null}
+            priorLabel="Previous route"
+            endpoints={endpoints}
+            pickMode={pickMode}
+            onPick={onPick}
+            onCursor={setCursor}
           />
-          <LayerRow
-            checked={show.unc}
-            onChange={(v) => setShow((s) => ({ ...s, unc: v }))}
-            label="SIC forecast uncertainty"
-            status="PARTIAL"
-          />
-          <LayerRow checked={show.stations} onChange={(v) => setShow((s) => ({ ...s, stations: v }))} label="Stations" />
-          <div className="mt-1.5 border-t border-graphite-700 pt-1.5">
-            <p className="text-[10.5px] leading-snug text-steel">
-              Iceberg, wind, current and risk-zone layers are not served by this deployment and are
-              therefore not offered.
-            </p>
-          </div>
-        </FloatPanel>
 
-        <div className="relative z-[500] mb-2 w-full border border-graphite-600 bg-graphite-850 px-3 py-2 shadow-overlay lg:absolute lg:bottom-10 lg:left-3 lg:mb-0 lg:w-[250px]">
-          <LineLegend
-            items={[
-              { label: reroute ? 'Re-planned route' : 'Recommended route', color: '#A8CFE6' },
-              ...(reroute ? [{ label: 'Original route', color: '#6E7881', dash: '6 5', width: 2 }] : []),
-              { label: 'Origin', color: '#A8CFE6', width: 2 },
-              { label: 'Destination', color: '#C39A4A', width: 2 },
-            ]}
-          />
-          {show.sic && <SicLegend className="mt-2 border-t border-graphite-700 pt-2" />}
+          {pickMode && (
+            <div className="pointer-events-none absolute left-1/2 top-[68px] z-[500] -translate-x-1/2 rounded-xl border border-[#22E5F0]/50 bg-[#05182B]/90 px-3.5 py-2 shadow-2xl backdrop-blur-xl">
+              <span className="flex items-center gap-2 font-mono text-[12px] text-[#22E5F0]">
+                <span className="h-2 w-2 animate-ping rounded-full bg-[#22E5F0]" />
+                Set {pickMode === 'origin' ? 'origin' : 'destination'} — click on chart
+              </span>
+            </div>
+          )}
+
+          {sic.loading && (
+            <div className="pointer-events-none absolute left-1/2 top-[68px] z-[500] -translate-x-1/2 rounded-xl border border-[#22E5F0]/40 bg-[#05182B]/90 px-3.5 py-2 shadow-2xl backdrop-blur-md">
+              <span className="mono-label flex items-center gap-2 text-[#22E5F0]">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-[#22E5F0]" />
+                PROJECTING POLAR SIC FRAME (EPSG:3031)…
+              </span>
+            </div>
+          )}
         </div>
 
-        <div className="relative z-[500] mb-2 inline-block border border-graphite-600 bg-graphite-850 px-3 py-2 shadow-overlay lg:absolute lg:bottom-3 lg:right-3 lg:mb-0">
-          <CoordReadout cursor={cursor} />
-        </div>
+        {/* RIGHT: ROUTE panel + FORECAST HORIZON panel */}
+        <aside className="order-3 flex min-h-0 flex-col gap-2 overflow-y-auto scrollbar-thin">
+          {/* ROUTE panel */}
+          <FloatPanel
+            title="ROUTE"
+            action={
+              <span
+                className={cn(
+                  'rounded px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider',
+                  plan && plan.success
+                    ? 'border border-emerald-500/40 bg-emerald-500/20 text-emerald-400'
+                    : 'border border-red-500/40 bg-red-500/20 text-red-400'
+                )}
+              >
+                {plan && plan.success ? 'OPTIMAL' : 'INFEASIBLE'}
+              </span>
+            }
+          >
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px] border-b border-white/10 pb-2">
+                <div className="text-mist">Run</div>
+                <div className="text-right text-white/90">
+                  {meta.data?.dates?.[timestep] ? `${meta.data.dates[timestep]} 06:30:00Z` : '2026-10-03 06:30:00Z'}
+                </div>
+                <div className="text-mist">Vessel</div>
+                <div className="text-right text-white/90">1</div>
+                <div className="text-mist">Candidates</div>
+                <div className="text-right text-white/90">{plan ? (reroute ? 2 : 1) : 0}</div>
+                <div className="text-mist">Peak risk</div>
+                <div className="text-right text-white/90">
+                  {plan?.max_sic != null ? `${(plan.max_sic * 100).toFixed(0)}%` : '—'}
+                </div>
+              </div>
 
-        {meta.error && (
-          <div className="relative z-[600] mx-auto my-3 w-[420px] max-w-full lg:absolute lg:left-1/2 lg:top-1/2 lg:my-0 lg:w-[420px] lg:-translate-x-1/2 lg:-translate-y-1/2">
-            <ErrorState title="Grid metadata unavailable" message={meta.error.message} />
-          </div>
-        )}
-        {meta.loading && !meta.data && (
-          <div className="relative z-[600] mx-auto my-3 w-[320px] max-w-full lg:absolute lg:left-1/2 lg:top-1/2 lg:my-0 lg:w-[320px] lg:-translate-x-1/2 lg:-translate-y-1/2">
-            <LoadingState label="Loading grid metadata" />
-          </div>
-        )}
+              {!plan && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] leading-snug text-amber-300">
+                  No route is marked recommended — compare the candidates below before committing.
+                </div>
+              )}
+
+              {!plan && (
+                <div className="py-2 text-center text-[11px] text-mist/60 italic">
+                  No candidate routes in this run
+                </div>
+              )}
+
+              {/* Existing PlannerForm for route optimization */}
+              <div className="mt-2 border-t border-white/10 pt-2">
+                <PlannerForm
+                  metadata={meta.data}
+                  layersData={layers.data}
+                  layersLoading={layers.loading}
+                  origin={origin}
+                  originPreset={originPreset}
+                  onOriginPreset={applyPreset('origin')}
+                  goal={goal}
+                  goalPreset={goalPreset}
+                  onGoalPreset={applyPreset('goal')}
+                  pickMode={pickMode}
+                  setPickMode={setPickMode}
+                  timestep={timestep}
+                  setTimestep={setTimestep}
+                  snap={snap}
+                  setSnap={setSnap}
+                  onPlan={handlePlan}
+                  busy={busy}
+                  planError={planError}
+                  canPlan={canPlan}
+                />
+              </div>
+
+              {plan && (
+                <RouteResult plan={plan} limitations={limitations} layersData={layers.data} />
+              )}
+
+              {plan && (
+                <RerouteFlow
+                  plan={plan}
+                  reroute={reroute}
+                  busy={rerouteBusy}
+                  error={rerouteError}
+                  supported={supported === 'unavailable' ? 'unavailable' : 'ready'}
+                  targetOptions={targetOptions}
+                  target={target}
+                  setTarget={setTarget}
+                  frameOrigin={frames.origin}
+                  frameTarget={frames.target}
+                  costWeights={plan?.cost_weights ?? layers.data?.cost_weights ?? null}
+                  onRun={handleReroute}
+                />
+              )}
+            </div>
+          </FloatPanel>
+
+          {/* FORECAST HORIZON panel */}
+          <FloatPanel title="FORECAST HORIZON">
+            <div className="space-y-2">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(2, (meta.data?.dates?.length ?? 3) - 1)}
+                step="1"
+                value={timestep}
+                onChange={(e) => setTimestep(Number(e.target.value))}
+                className="h-1.5 w-full cursor-pointer accent-[#22E5F0] bg-white/10 rounded"
+              />
+              <div className="flex justify-between font-mono text-[10px] text-mist">
+                <span>D+1</span>
+                <span>D+2</span>
+                <span>D+3</span>
+              </div>
+              <p className="font-mono text-[11px] text-[#A9DFFF]">
+                Valid for: {meta.data?.dates?.[timestep] ?? '2026-01-21'} · D+{timestep + 1}
+              </p>
+            </div>
+          </FloatPanel>
+        </aside>
       </div>
     </div>
   )

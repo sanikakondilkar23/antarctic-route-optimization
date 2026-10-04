@@ -125,8 +125,9 @@ export default function SystemStatus() {
   const datasets = system?.datasets ?? {}
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="scrollbar-thin h-full overflow-y-auto p-5">
+      <div className="mx-auto max-w-[1440px] space-y-6">
+        <PageHeader
         title="System status"
         subtitle="Availability, provenance and limitations exactly as the AURORA API reports them."
         actions={
@@ -349,6 +350,7 @@ export default function SystemStatus() {
           </Card>
         </>
       )}
+      </div>
     </div>
   )
 }
