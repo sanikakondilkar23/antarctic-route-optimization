@@ -1,196 +1,214 @@
 /**
- * useSicForecast.js — loads the real ConvLSTM SIC forecast for the website.
+ * useSicForecast.js - loads the REAL sea-ice fields the AURORA backend serves.
  *
- * Responsibilities:
- *   - fetch /api/sic/forecast and /api/sic/timeseries, with abort on unmount
- *   - hold the forecast horizon (Reference / H+1 / H+2 / H+3) and the field
- *     layer (concentration / uncertainty / confidence)
- *   - resolve which field should be drawn, and — when the requested field is
- *     genuinely unavailable — fall back to a field that IS available while
- *     keeping the original reason so the UI can state it plainly
+ * Data path:
+ *   /api/sic/metadata        grid axes + the list of forecast dates
+ *   /api/sic/<t>             one SIC frame (base64 value + validity bitmask)
+ *   /api/uncertainty/<t>     one forecast-uncertainty frame
  *
- * It never substitutes a value. An unavailable field stays unavailable.
+ * The frames are decoded and colourised in the browser so Leaflet can overlay
+ * them. Invalid cells stay fully transparent: NaN means INVALID / NON-NAVIGABLE
+ * and is never drawn as open water.
+ *
+ * If any request fails, `status` becomes 'error' and `active.available` is
+ * false with the exact reason. No value is ever substituted, so the UI can say
+ * "DATA UNAVAILABLE" truthfully.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { apiUrl, capabilities, fetchForecast, fetchTimeseries } from '../lib/sicApi'
+import {
+  AuroraApiError,
+  SIC_LEGEND,
+  UNCERTAINTY_LEGEND,
+  boundsFromMetadata,
+  decodeSlice,
+  decodeUncertainty,
+  fetchEnsemble,
+  fetchMetadata,
+  fetchSicSlice,
+  fetchUncertaintySlice,
+  rasterToDataUrl,
+} from '../lib/auroraApi'
 
-export const HORIZON_OBSERVED = 'observed'
-
-export const HORIZONS = [
-  { id: HORIZON_OBSERVED, short: 'Observed', label: 'Reference (Observed)', days: 0 },
-  { id: 1, short: 'H+1', label: 'H+1 · +24 h', days: 1 },
-  { id: 2, short: 'H+2', label: 'H+2 · +48 h', days: 2 },
-  { id: 3, short: 'H+3', label: 'H+3 · +72 h', days: 3 },
-]
+export const LAYER_SIC = 'sic'
+export const LAYER_UNCERTAINTY = 'uncertainty'
 
 export const SIC_LAYERS = [
-  { id: 'sic', label: 'Concentration', hint: 'NSIDC CDR v6 sea-ice concentration, 0–1' },
-  { id: 'uncertainty', label: 'Uncertainty', hint: 'Ensemble + MC-dropout 1σ spread' },
-  { id: 'confidence', label: 'Confidence', hint: 'High / medium / low class map' },
+  { id: LAYER_SIC, label: 'Concentration', hint: 'Real SIC field served for the selected forecast day' },
+  { id: LAYER_UNCERTAINTY, label: 'Uncertainty', hint: 'Forecast spread (1 sigma, SIC fraction) for the lead time below' },
 ]
 
-function entryFor(forecast, horizon, layer) {
-  if (!forecast) return null
-  if (horizon === HORIZON_OBSERVED) {
-    if (layer === 'sic') return { field: 'observed', entry: forecast.observed }
-    return { field: 'observed', entry: forecast.observed }
-  }
-  const key = String(horizon)
-  if (layer === 'uncertainty') {
-    return { field: 'uncertainty', entry: forecast.uncertainty?.[key] }
-  }
-  if (layer === 'confidence') {
-    return { field: 'confidence', entry: forecast.confidence?.[key] }
-  }
-  const block = forecast.forecast?.[key]
-  return { field: 'forecast_mean', entry: block?.mean, block }
+export const UNCERTAINTY_HORIZONS = [
+  { id: 0, short: 'D+1', label: 'Lead time +1 day' },
+  { id: 1, short: 'D+2', label: 'Lead time +2 days' },
+  { id: 2, short: 'D+3', label: 'Lead time +3 days' },
+]
+
+function unavailable(reason) {
+  return { available: false, url: null, bounds: null, stats: null, reason }
 }
 
-function decorate(forecast, resolved) {
-  if (!resolved?.entry?.available) {
-    return {
-      field: resolved?.field ?? null,
-      url: null,
-      bounds: forecast?.grid?.bounds ?? null,
-      stats: null,
-      legend: null,
-      available: false,
-      reason: resolved?.entry?.reason ?? 'Field not served by the API.',
-    }
-  }
-  const { entry } = resolved
-  return {
-    field: resolved.field,
-    url: apiUrl(entry.url),
-    bounds: forecast?.grid?.bounds ?? null,
-    stats: entry.stats,
-    legend: entry.legend,
-    available: true,
-    reason: null,
-  }
-}
-
-export default function useSicForecast({ autoRefetchMs = 0 } = {}) {
-  const [forecast, setForecast] = useState(null)
-  const [timeseries, setTimeseries] = useState(null)
-  const [date, setDate] = useState(null)
-  const [horizon, setHorizon] = useState(HORIZON_OBSERVED)
-  const [layer, setLayer] = useState('sic')
+export default function useSicForecast() {
+  const [metadata, setMetadata] = useState(null)
   const [status, setStatus] = useState('loading')
   const [error, setError] = useState(null)
+  const [timestep, setTimestep] = useState(0)
+  const [layer, setLayer] = useState(LAYER_SIC)
+  const [horizon, setHorizon] = useState(0)
+  const [frame, setFrame] = useState(null)
   const controllerRef = useRef(null)
 
-  const load = useCallback(async (targetDate = null) => {
-    controllerRef.current?.abort()
-    const controller = new AbortController()
-    controllerRef.current = controller
+  /* ---------------- metadata ---------------- */
+  useEffect(() => {
+    let cancelled = false
     setStatus('loading')
-    setError(null)
-    try {
-      const [f, t] = await Promise.all([
-        fetchForecast({ date: targetDate, signal: controller.signal }),
-        fetchTimeseries({ signal: controller.signal }),
-      ])
-      if (controller.signal.aborted) return
-      setForecast(f)
-      setTimeseries(t)
-      setDate(f.date)
-      setStatus('ready')
-    } catch (err) {
-      if (err?.name === 'AbortError') return
-      setForecast(null)
-      setTimeseries(null)
-      setError(err)
-      setStatus('error')
+    fetchMetadata()
+      .then((meta) => {
+        if (cancelled) return
+        setMetadata(meta)
+        setError(null)
+        setStatus((prev) => (prev === 'error' ? 'ready' : 'ready'))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setMetadata(null)
+        setError(err)
+        setStatus('error')
+      })
+    return () => {
+      cancelled = true
     }
   }, [])
 
-  useEffect(() => {
-    load(null)
-    return () => controllerRef.current?.abort()
-  }, [load])
-
-  useEffect(() => {
-    if (!autoRefetchMs) return undefined
-    const id = setInterval(() => load(date), autoRefetchMs)
-    return () => clearInterval(id)
-  }, [autoRefetchMs, date, load])
-
-  const caps = useMemo(() => capabilities(forecast), [forecast])
-
-  const resolved = useMemo(() => entryFor(forecast, horizon, layer), [forecast, horizon, layer])
-  let active = decorate(forecast, resolved)
-
-  // If the requested field is unavailable but a real alternative exists for the
-  // same horizon, draw that instead and keep the original reason visible.
-  let notice = null
-  if (forecast && !active.available) {
-    const alternatives = horizon === HORIZON_OBSERVED
-      ? []
-      : ['uncertainty', 'confidence'].filter((id) => id !== layer)
-    for (const alt of alternatives) {
-      const altResolved = entryFor(forecast, horizon, alt)
-      const altActive = decorate(forecast, altResolved)
-      if (altActive.available) {
-        notice = {
-          severity: 'warn',
-          requested: SIC_LAYERS.find((l) => l.id === layer)?.label ?? layer,
-          reason: active.reason,
-          showing: SIC_LAYERS.find((l) => l.id === alt)?.label ?? alt,
-        }
-        active = { ...altActive, fallback: true }
-        break
+  /* ---------------- one frame at a time ---------------- */
+  const loadFrame = useCallback(
+    async (t, which, h) => {
+      controllerRef.current?.abort()
+      const controller = new AbortController()
+      controllerRef.current = controller
+      try {
+        const raw =
+          which === LAYER_UNCERTAINTY
+            ? await fetchUncertaintySlice(t, h)
+            : await fetchSicSlice(t)
+        if (controller.signal.aborted) return
+        const decoded =
+          which === LAYER_UNCERTAINTY ? decodeUncertainty(raw) : decodeSlice(raw)
+        const vmax = which === LAYER_UNCERTAINTY ? Math.max(decoded.stats?.max || 0, 0.05) : 1
+        const url = rasterToDataUrl(decoded, { kind: which === LAYER_UNCERTAINTY ? 'unc' : 'sic', vmax })
+        setFrame({
+          available: true,
+          url,
+          stats: decoded.stats,
+          date: decoded.date,
+          timestep: decoded.timestep,
+          horizonDays: decoded.horizonDays ?? null,
+          reason: null,
+        })
+        setError(null)
+        setStatus('ready')
+      } catch (err) {
+        if (err?.name === 'AbortError') return
+        setFrame(
+          unavailable(
+            err instanceof AuroraApiError
+              ? err.message
+              : 'The SIC field could not be loaded.',
+          ),
+        )
+        setError(err)
+        setStatus('error')
       }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (!metadata) return undefined
+    loadFrame(timestep, layer, horizon)
+    return () => controllerRef.current?.abort()
+  }, [metadata, timestep, layer, horizon, loadFrame])
+
+  const bounds = useMemo(() => boundsFromMetadata(metadata), [metadata])
+  const dates = metadata?.dates ?? []
+  const nTimesteps = metadata?.n_timesteps ?? dates.length
+  const date = dates[timestep] ?? null
+
+  /* ---------------- checkpoint / ensemble provenance ---------------- */
+  const [ensemble, setEnsemble] = useState(null)
+  useEffect(() => {
+    let cancelled = false
+    fetchEnsemble()
+      .then((e) => {
+        if (!cancelled) setEnsemble(e)
+      })
+      .catch(() => {
+        if (!cancelled) setEnsemble(null)
+      })
+    return () => {
+      cancelled = true
     }
-  }
+  }, [])
 
-  const availableHorizons = useMemo(() => {
-    if (!forecast) return []
-    return HORIZONS.filter((h) => {
-      if (h.id === HORIZON_OBSERVED) return Boolean(forecast.observed?.available)
-      const key = String(h.id)
-      return (
-        Boolean(forecast.forecast?.[key]?.mean?.available) ||
-        Boolean(forecast.uncertainty?.[key]?.available) ||
-        Boolean(forecast.confidence?.[key]?.available)
-      )
-    }).map((h) => h.id)
-  }, [forecast])
+  const legend = useMemo(() => {
+    if (layer === LAYER_SIC) return SIC_LEGEND
+    return { ...UNCERTAINTY_LEGEND, vmax: frame?.stats?.max ?? 1 }
+  }, [layer, frame])
 
-  const model = forecast?.model ?? null
-  const checkpointsLoaded = model?.checkpoints_loaded ?? 0
+  const active = useMemo(() => {
+    if (status === 'error' && !frame) {
+      return unavailable(error?.message ?? 'DATA UNAVAILABLE - the AURORA API did not respond.')
+    }
+    if (!frame) return unavailable('Loading...')
+    if (!frame.available) return frame
+    return { ...frame, bounds, legend }
+  }, [frame, bounds, legend, status, error])
+
+  const refresh = useCallback(() => {
+    if (metadata) loadFrame(timestep, layer, horizon)
+  }, [metadata, timestep, layer, horizon, loadFrame])
+
+  const members = ensemble?.members ?? []
+  const checkpointSummary = ensemble
+    ? {
+        loaded: members.filter((m) => m.checkpoint_present).length,
+        expected: ensemble.n_members ?? members.length,
+        architecture: ensemble.architecture ?? null,
+        parameters: ensemble.param_count ?? null,
+        horizons: ensemble.horizons ?? null,
+        recordedMetrics: members.map((m) => ({ run: m.run, seed: m.seed, metrics: m.metrics ?? null })),
+        note: ensemble.note ?? null,
+        inferenceRerunPossible: ensemble.inference_rerun_possible ?? false,
+      }
+    : null
 
   return {
     status,
     error,
-    forecast,
-    timeseries,
-    model,
-    artifacts: forecast?.artifacts ?? null,
-    liveInference: forecast?.live_inference ?? null,
-    source: forecast?.source ?? null,
-    generatedAt: forecast?.generated_at ?? null,
+    metadata,
+    ensemble,
+    model: ensemble
+      ? {
+          architecture: ensemble.architecture,
+          ensemble_seeds: ensemble.n_members,
+          source: 'backend/runs/final_10ch_3f_seed{0,1,2}/best_model.pt',
+        }
+      : null,
+    checkpointSummary,
+    dates,
     date,
-    dates: forecast?.dates ?? [],
-    setDate: useCallback((value) => load(value), [load]),
-    refresh: useCallback(() => load(date), [date, load]),
-    horizon,
-    setHorizon,
+    nTimesteps,
+    timestep,
+    setTimestep,
     layer,
     setLayer,
+    horizon,
+    setHorizon,
     active,
-    notice,
-    capabilities: caps,
-    availableHorizons,
-    checkpointSummary: {
-      loaded: checkpointsLoaded,
-      expected: model?.ensemble_seeds ?? 3,
-      architecture: model?.architecture ?? null,
-      architectureMatches: model?.architecture_matches_checkpoints ?? false,
-      parameters: model?.parameters_per_checkpoint ?? null,
-      mcDropout: model?.mc_dropout ?? null,
-      conformal: model?.conformal ?? null,
-    },
+    legend,
+    refresh,
+    available: Boolean(active?.available),
+    /** Exact reason a field is not shown; null when it is shown. */
+    unavailableReason: active?.available ? null : active?.reason,
   }
 }

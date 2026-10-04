@@ -340,6 +340,28 @@ def cached_stats(t: int) -> Dict[str, Any]:
     return slice_stats(np.asarray(sic_mmap()[t], dtype=np.float64))
 
 
+def _weights_from_key(weights_key: str) -> CostWeights:
+    """
+    Rebuild the :class:`CostWeights` a plan was requested with.
+
+    ``weights_key`` is the JSON serialisation of a weight set (see
+    ``_weights_key``), so the cache key and the objective can never drift
+    apart: a cached plan is always the plan that was computed with those
+    exact weights.  The historical default (``"default"``, or any payload
+    that does not parse back into a valid weight set) falls through to the
+    server configuration, so every pre-existing caller behaves as before.
+    """
+    if not weights_key or weights_key == "default":
+        return cost_weights()
+    try:
+        payload = json.loads(weights_key)
+        fields = set(CostWeights.__dataclass_fields__)
+        values = {k: float(v) for k, v in payload.items() if k in fields}
+        return CostWeights(**values)
+    except (ValueError, TypeError, KeyError, AssertionError):
+        return cost_weights()
+
+
 @lru_cache(maxsize=16)
 def route_grid(t: int, weights_key: str):
     """
@@ -349,14 +371,88 @@ def route_grid(t: int, weights_key: str):
     attached here and nowhere else, so the grid the optimizer consumes is the
     grid whose provenance is reported.  Layers whose dataset is missing stay
     absent and are reported ``NOT_AVAILABLE``.
+
+    The cache key includes the weight set: the committed POLARIS ice-class
+    multiplier is only attached when the requested objective actually reads it
+    (``w_ice_class > 0``), so a grid built for one objective is never handed to
+    another.
     """
-    weights = cost_weights()
+    weights = _weights_from_key(weights_key)
     return build_route_grid(
-        t, cache_dir=CACHE, route_start=ROUTE_START, weights=weights)
+        t, cache_dir=CACHE, route_start=ROUTE_START, weights=weights,
+        apply_ice_multiplier=bool(weights.w_ice_class > 0.0))
 
 
 def _weights_key() -> str:
     return json.dumps(cost_weights().to_dict(), sort_keys=True)
+
+
+def _key_for(weights: CostWeights) -> str:
+    return json.dumps(weights.to_dict(), sort_keys=True)
+
+
+#: Routing preference presets.
+#:
+#: A preference is NOT a second routing engine and NOT a new optimisation
+#: mode: it is an explicit :class:`CostWeights` set handed to the same
+#: ``CostMap`` + ``A*`` path the API has always used.  Every weight below only
+#: reaches layers this deployment really carries -- ``sic_mean`` (committed
+#: real forecast) and ``ice_multiplier`` (committed POLARIS-style artifact) --
+#: so a "risk-aware" route is priced by real data or not at all.  Layers with
+#: no dataset (wind, current, depth, iceberg risk) stay at 0 in every preset.
+PREFERENCES: Dict[str, Dict[str, Any]] = {
+    "balanced": {
+        "label": "Balanced",
+        "hint": "The documented project objective: sea-ice concentration and "
+                "distance only (w_sic=1.0, w_distance=1.0).",
+        "weights": {"w_sic": 1.0, "w_distance": 1.0},
+    },
+    "risk_aware": {
+        "label": "Risk-aware",
+        "hint": "Higher sea-ice penalty plus the committed POLARIS ice-class "
+                "multiplier (w_sic=1.4, w_ice_class=1.0, w_distance=0.7), so "
+                "marginal and consolidated pack are priced above open water "
+                "and the impassable class is never traversed.",
+        "weights": {"w_sic": 1.4, "w_ice_class": 1.0, "w_distance": 0.7},
+    },
+    "distance_efficient": {
+        "label": "Distance-efficient",
+        "hint": "Distance dominates and sea ice is discounted to a tie-break "
+                "(w_sic=0.25, w_distance=2.0), producing the shortest "
+                "priced corridor rather than the safest one.",
+        "weights": {"w_sic": 0.25, "w_distance": 2.0},
+    },
+}
+
+#: The preset used when a request does not name one.  Identical to the
+#: historical server objective, so nothing changes for existing callers.
+DEFAULT_PREFERENCE = "balanced"
+
+
+def resolve_preference(preference: Any) -> Tuple[str, CostWeights, bool]:
+    """
+    ``None`` / a known preset name -> ``(canonical name, weights, explicit)``.
+
+    A request that does NOT name a preference keeps the server objective
+    untouched (``SIH_W_*`` environment variables still win), so the behaviour
+    of every existing client is bit-for-bit the same as before.  Only an
+    explicitly requested preset applies its overrides on top of that base.
+    """
+    if preference is None or (isinstance(preference, str) and not preference.strip()):
+        return DEFAULT_PREFERENCE, cost_weights(), False
+    if not isinstance(preference, str):
+        raise RouteRequestError(
+            f"preference must be a string, got {preference!r}",
+            "invalid_preference", available=sorted(PREFERENCES))
+    name = preference.strip().lower()
+    if name not in PREFERENCES:
+        raise RouteRequestError(
+            f"unknown routing preference {preference!r}",
+            "invalid_preference", available=sorted(PREFERENCES))
+    overrides = {k: float(v) for k, v in PREFERENCES[name]["weights"].items()}
+    values = cost_weights().to_dict()
+    values.update(overrides)
+    return name, CostWeights(**values), True
 
 
 @lru_cache(maxsize=16)
@@ -365,7 +461,7 @@ def plan_route(t: int, start_row: int, start_col: int,
     """Run the repository's existing A* + CostMap on one real SIC timestep."""
     grid, cost_map, report = route_grid(t, weights_key)
     result = astar(grid, (start_row, start_col), (goal_row, goal_col),
-                   weights=cost_weights())
+                   weights=_weights_from_key(weights_key))
     path = [[int(r), int(c)] for r, c in result.path]
     stats: Dict[str, Any] = {"mean_sic": None, "max_sic": None,
                              "nan_cells_on_route": None}
@@ -689,9 +785,158 @@ def changed_segments(orig_path: List[List[int]],
     return segments
 
 
+#: Published cost components of a returned route, in the order the UI shows
+#: them: (component id, grid attribute, CostMap term key, weight name, label).
+ROUTE_COST_COMPONENTS: List[Tuple[str, str, str, str, str]] = [
+    ("sic", "sic_mean", "sic", "w_sic", "SIC contribution"),
+    ("sic_uncertainty", "sic_uncertainty", "unc", "w_unc",
+     "SIC uncertainty"),
+    ("iceberg", "iceberg_risk", "ice", "w_ice", "Iceberg contribution"),
+    ("iceberg_uncertainty", None, None, "w_ice",
+     "Iceberg uncertainty"),
+    ("wind", "wind_cost", "wind", "w_wind", "Wind contribution"),
+    ("current", "current_cost", "curr", "w_curr", "Current contribution"),
+    ("depth", "depth", "depth", "w_depth", "Depth contribution"),
+    ("ice_class", "ice_multiplier", "ice_class", "w_ice_class",
+     "Ice-class contribution"),
+]
+
+
+def route_cost_terms(grid, cost_map, path, weights, report,
+                     total_cost: float, route_length_units: float
+                     ) -> Dict[str, Any]:
+    """
+    Attribute ONE returned route's objective value to its real components.
+
+    ``astar`` accumulates ``env_cost[cell]`` for every cell of the path plus
+    ``w_distance * movement_distance`` per step, so summing the CostMap's own
+    weighted terms over that same path reproduces ``total_cost`` exactly.
+
+    A component this deployment cannot serve is returned as ``value: null``
+    with the layer registry's own status and reason.  Nothing is estimated,
+    nothing is shown as a benign zero, and a component whose weight is 0 is
+    reported as present-but-not-in-the-objective rather than as a
+    contribution of zero.
+    """
+    registry = report.get("registry") or {}
+    rows = np.array([p[0] for p in path], dtype=np.int64)
+    cols = np.array([p[1] for p in path], dtype=np.int64)
+
+    components: Dict[str, Any] = {}
+    attributed = 0.0
+    for cid, attr, term_key, weight_name, label in ROUTE_COST_COMPONENTS:
+        weight = float(getattr(weights, weight_name, 0.0))
+        entry: Dict[str, Any] = {
+            "id": cid, "label": label, "weight_name": weight_name,
+            "weight": weight, "value": None, "in_cost": False,
+        }
+        # Iceberg uncertainty has no artifact at all in this deployment:
+        # there is no layer to read, so it is reported from the registry only.
+        layer = registry.get(attr) if attr else None
+        if attr is None:
+            entry.update({
+                "status": "NOT_AVAILABLE",
+                "reason": LIMITATIONS.get(
+                    "iceberg",
+                    "No iceberg risk or uncertainty field is served."),
+                "reason_note": "even a risk field would be required before an "
+                               "uncertainty field could exist",
+            })
+            components[cid] = entry
+            continue
+
+        arr = getattr(grid, attr, None)
+        status = getattr(layer, "status", None)
+        reason = getattr(layer, "reason", None)
+        if arr is None:
+            entry.update({
+                "status": status or "NOT_AVAILABLE",
+                "reason": reason or f"{attr} is not attached to this grid "
+                                    "(dataset unavailable)",
+                "limitation": LIMITATIONS.get(
+                    {"iceberg_risk": "iceberg", "wind_cost": "wind",
+                     "current_cost": "cmems", "depth": "depth",
+                     "sic_uncertainty": "uncertainty"}.get(attr, "sic")),
+            })
+            components[cid] = entry
+            continue
+
+        if weight <= 0.0:
+            entry.update({
+                "status": "PRESENT_NOT_IN_COST",
+                "reason": f"{weight_name} = 0, so this layer is carried on "
+                          f"the grid but does not price the route",
+            })
+            components[cid] = entry
+            continue
+
+        values = cost_map.terms.get(term_key)
+        if values is None:
+            entry.update({
+                "status": "NOT_IN_COST",
+                "reason": f"{weight_name} = {weight} but the CostMap did not "
+                          f"produce a {term_key} term for this grid",
+            })
+            components[cid] = entry
+            continue
+        values = np.asarray(values, dtype=np.float64)
+        if values.shape != (grid.n_rows, grid.n_cols):
+            entry.update({
+                "status": "NOT_IN_COST",
+                "reason": f"{term_key} term has shape {values.shape}, which "
+                          f"does not match the {grid.n_rows}x{grid.n_cols} grid",
+            })
+            components[cid] = entry
+            continue
+
+        contribution = float(np.sum(values[rows, cols]))
+        entry.update({
+            "status": "IN_COST", "in_cost": True, "value": contribution,
+            "share_of_total": (contribution / total_cost
+                               if total_cost else None),
+            "route_cells": int(len(path)),
+            "omitted_route_cells": int(
+                np.isnan(np.asarray(arr, dtype=np.float64)[rows, cols]).sum()),
+        })
+        attributed += contribution
+        components[cid] = entry
+
+    distance = float(weights.w_distance) * float(route_length_units)
+    components["distance"] = {
+        "id": "distance", "label": "Distance contribution",
+        "weight_name": "w_distance", "weight": float(weights.w_distance),
+        "status": "IN_COST" if weights.w_distance > 0 else "PRESENT_NOT_IN_COST",
+        "in_cost": bool(weights.w_distance > 0),
+        "value": distance if weights.w_distance > 0 else None,
+        "share_of_total": (distance / total_cost
+                           if weights.w_distance > 0 and total_cost else None),
+        "reason": (None if weights.w_distance > 0
+                   else "w_distance = 0, so distance does not price the route"),
+        "route_length_units": float(route_length_units),
+    }
+    if weights.w_distance > 0:
+        attributed += distance
+
+    return {
+        "components": components,
+        "in_cost": [c["id"] for c in components.values() if c.get("in_cost")],
+        "not_available": [c["id"] for c in components.values()
+                          if c.get("status") in ("NOT_AVAILABLE", None)
+                          and c["value"] is None],
+        "attributed_cost": attributed,
+        "total_cost": float(total_cost),
+        "residual": float(total_cost - attributed),
+        "residual_note": "attributed terms minus the A* objective value; "
+                         "should be ~0 apart from floating-point round-off",
+        "unit": "objective units (weighted cost), not a physical risk index",
+        "formula": report["cost_breakdown"]["formula"],
+    }
+
+
 def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
                    timestep: Any, allow_snap: bool = True,
-                   max_snap_cells: int = MAX_SNAP_CELLS) -> Dict[str, Any]:
+                   max_snap_cells: int = MAX_SNAP_CELLS,
+                   preference: Any = None) -> Dict[str, Any]:
     """
     Full interactive path: geographic request -> validated environmental grid
     -> A* + CostMap on the REAL SIC field -> validated route.
@@ -711,7 +956,10 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
     except IndexError as exc:
         raise RouteRequestError(str(exc), "timestep_out_of_range", timestep=t)
 
-    grid, cost_map, report = route_grid(t, _weights_key())
+    pref_name, weights, pref_explicit = resolve_preference(preference)
+    wk = _key_for(weights)
+
+    grid, cost_map, report = route_grid(t, wk)
 
     start = resolve_endpoint("start", start_lat, start_lon, grid,
                              allow_snap, max_snap_cells)
@@ -720,7 +968,6 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
     start_rc = (start["cell"][0], start["cell"][1])
     goal_rc = (goal["cell"][0], goal["cell"][1])
 
-    wk = _weights_key()
     plan = plan_route(t, start_rc[0], start_rc[1], goal_rc[0], goal_rc[1], wk)
     if not plan["success"]:
         raise RouteRequestError(
@@ -762,7 +1009,19 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
         "expanded_nodes": plan["expanded_nodes"],
         "validation": validation,
         "algorithm": "A* + CostMap (src/routing/astar.py, src/routing/cost.py)",
-        "cost_weights": cost_weights().to_dict(),
+        "preference": {
+            "id": pref_name,
+            "label": PREFERENCES[pref_name]["label"],
+            "hint": PREFERENCES[pref_name]["hint"],
+            "explicit": bool(pref_explicit),
+            "weights": weights.to_dict(),
+            "available": sorted(PREFERENCES),
+        },
+        "cost_weights": weights.to_dict(),
+        "route_cost_terms": route_cost_terms(
+            grid, cost_map, path, weights, report,
+            total_cost=float(plan["total_cost"]),
+            route_length_units=float(plan["route_length_grid_units"])),
         "cost_breakdown": report["cost_breakdown"],
         "layer_status": plan["layer_status"],
         "environmental_grid": report["grid"],
@@ -786,9 +1045,76 @@ def optimize_route(start_lat: Any, start_lon: Any, goal_lat: Any, goal_lon: Any,
     }
 
 
+def reroute_explanation(original_block: Dict[str, Any],
+                        updated_block: Dict[str, Any],
+                        comparison: Dict[str, Any],
+                        metrics: Dict[str, Any],
+                        n_segments: int) -> Dict[str, Any]:
+    """
+    Say, in words, only what the two returned routes actually demonstrate.
+
+    Every sentence is derived from a number in this response (waypoint sets,
+    mean/max SIC, lengths).  When nothing changed the API says so plainly
+    rather than dressing a null result up as a hazard event.
+    """
+    facts: List[str] = []
+    delta = (metrics or {}).get("delta") or {}
+    changed = comparison.get("changed_cells")
+    overlap = comparison.get("jaccard_overlap")
+    d_sic = delta.get("mean_sic")
+    d_max = delta.get("max_sic")
+    d_len = delta.get("length_grid_units")
+
+    if comparison.get("identical_path") or changed == 0:
+        facts.append(
+            "The re-planned track is identical to the original one: the cost "
+            "surface changed, but not enough to move the optimum.")
+    elif changed:
+        facts.append(
+            f"{int(changed)} cells differ between the two tracks "
+            f"(Jaccard overlap {overlap:.3f}); {n_segments} contiguous "
+            f"segments were abandoned or newly taken."
+            if overlap is not None else
+            f"{int(changed)} cells differ between the two tracks "
+            f"across {n_segments} segments.")
+
+    if d_sic is not None:
+        direction = "increased" if d_sic > 0 else ("decreased" if d_sic < 0 else "held steady")
+        facts.append(
+            f"Mean sea-ice concentration along the track {direction}: "
+            f"{original_block.get('mean_sic'):.4f} \u2192 "
+            f"{updated_block.get('mean_sic'):.4f} "
+            f"({d_sic:+.4f}).")
+    if d_max is not None and abs(d_max) > 1e-9:
+        facts.append(
+            f"Peak sea-ice concentration on the track moved "
+            f"{original_block.get('max_sic'):.4f} \u2192 "
+            f"{updated_block.get('max_sic'):.4f} ({d_max:+.4f}).")
+    if d_len is not None:
+        facts.append(
+            f"Track length changed by {d_len:+.2f} grid cells "
+            f"({original_block.get('route_length'):.1f} \u2192 "
+            f"{updated_block.get('route_length'):.1f}).")
+
+    headline = ("SIC risk changed along the original corridor, so the "
+                "optimizer re-planned the leg." if (d_sic and abs(d_sic) > 0)
+                else "The forecast field was updated; the optimum is unchanged.")
+    return {
+        "headline": headline,
+        "facts": facts,
+        "derived_from": ["route_comparison.changed_cells",
+                         "metrics.delta.mean_sic",
+                         "metrics.delta.max_sic",
+                         "metrics.delta.length_grid_units"],
+        "note": "Generated only from values in this response; no hazard is "
+                "simulated and no risk field is invented.",
+    }
+
+
 def reroute_route(original: Any, new_timestep: Any,
                   start: Optional[Any] = None, goal: Optional[Any] = None,
-                  allow_snap: bool = True) -> Dict[str, Any]:
+                  allow_snap: bool = True, preference: Any = None
+                  ) -> Dict[str, Any]:
     """
     Re-optimize on a LATER real SIC field and report what actually changed.
 
@@ -796,7 +1122,22 @@ def reroute_route(original: Any, new_timestep: Any,
     ``goal``), so the comparison is like-for-like: same leg, new environment.
     Both plans come from the same ``plan_route`` A* + CostMap call, and both
     are safety-validated before anything is returned.
+
+    The objective is the one the original route was planned with: an explicit
+    ``preference`` wins, otherwise the ``preference`` echoed by the optimize
+    response is reused, and only if neither is present does the server default
+    apply.  Re-planning a risk-aware route under a distance objective would not
+    be a reroute, it would be a different question.
     """
+    if preference is None and isinstance(original, dict):
+        pref = original.get("preference")
+        if isinstance(pref, dict):
+            preference = pref.get("id")
+        elif isinstance(pref, str):
+            preference = pref
+    pref_name, weights, pref_explicit = resolve_preference(preference)
+    wk = _key_for(weights)
+
     f = field()
     if not isinstance(original, dict):
         raise RouteRequestError(
@@ -846,7 +1187,6 @@ def reroute_route(original: Any, new_timestep: Any,
     start_latlon = endpoint(start if start is not None else original.get("start"), 0)
     goal_latlon = endpoint(goal if goal is not None else original.get("goal"), -1)
 
-    wk = _weights_key()
     grid, cost_map, report = route_grid(nt, wk)
     s_info = resolve_endpoint("start", start_latlon[0], start_latlon[1], grid,
                               allow_snap, MAX_SNAP_CELLS)
@@ -913,6 +1253,11 @@ def reroute_route(original: Any, new_timestep: Any,
         "date": str(f.dates[origin_step])[:10],
         "waypoints": len(orig_cells),
         "path": orig_cells,
+        "route_length": float(sum(
+            math.hypot(r2 - r1, c2 - c1)
+            for (r1, c1), (r2, c2) in zip(orig_cells, orig_cells[1:]))),
+        "route_length_units": "grid_cells",
+        "route_length_km": round(path_length_km(orig_cells), 2),
         "mean_sic": float(np.nanmean(origin_sic)),
         "max_sic": float(np.nanmax(origin_sic)),
         "nan_cells": origin_validation["nan_cells"],
@@ -937,6 +1282,35 @@ def reroute_route(original: Any, new_timestep: Any,
         "waypoints_after": len(new_path),
     }
 
+    segments = changed_segments(orig_cells, new_path)
+    metrics_block = {
+        "original": {k: original_block.get(k) for k in
+                     ("waypoints", "mean_sic", "max_sic", "route_length",
+                      "route_length_km")},
+        "updated": {k: updated_block.get(k) for k in
+                    ("waypoints", "mean_sic", "max_sic", "route_length",
+                     "route_length_km", "total_cost")},
+        "delta": {
+            "mean_sic": (None if original_block.get("mean_sic") is None
+                         or new_plan["mean_sic"] is None
+                         else new_plan["mean_sic"] - original_block["mean_sic"]),
+            "max_sic": (None if original_block.get("max_sic") is None
+                        or new_plan["max_sic"] is None
+                        else new_plan["max_sic"] - original_block["max_sic"]),
+            "length_grid_units": (
+                None if original_block.get("route_length") is None
+                else new_plan["route_length_grid_units"]
+                - original_block["route_length"]),
+            "length_km": (
+                None if original_block.get("route_length_km") is None
+                or updated_block.get("route_length_km") is None
+                else updated_block["route_length_km"]
+                - original_block["route_length_km"]),
+        },
+    }
+    explanation = reroute_explanation(original_block, updated_block, comparison,
+                                      metrics_block, len(segments))
+
     return {
         "success": True,
         "status": "SUCCESS",
@@ -950,31 +1324,22 @@ def reroute_route(original: Any, new_timestep: Any,
         "original_route": original_block,
         "updated_route": updated_block,
         "route_comparison": comparison,
-        "changed_segments": changed_segments(orig_cells, new_path),
+        "changed_segments": segments,
+        "change_explanation": explanation,
+        "preference": {
+            "id": pref_name,
+            "label": PREFERENCES[pref_name]["label"],
+            "hint": PREFERENCES[pref_name]["hint"],
+            "explicit": bool(pref_explicit),
+            "weights": weights.to_dict(),
+            "available": sorted(PREFERENCES),
+        },
         "layer_status": new_plan["layer_status"],
         "cost_breakdown": report["cost_breakdown"],
         "environmental_grid": report["grid"],
-        "cost_weights": cost_weights().to_dict(),
+        "cost_weights": weights.to_dict(),
         "land_mask": report["land_mask"],
-        "metrics": {
-            "original": {k: original_block.get(k) for k in
-                         ("waypoints", "mean_sic", "max_sic", "route_length")},
-            "updated": {k: updated_block.get(k) for k in
-                        ("waypoints", "mean_sic", "max_sic", "route_length",
-                         "total_cost")},
-            "delta": {
-                "mean_sic": (None if original_block.get("mean_sic") is None
-                             or new_plan["mean_sic"] is None
-                             else new_plan["mean_sic"] - original_block["mean_sic"]),
-                "max_sic": (None if original_block.get("max_sic") is None
-                            or new_plan["max_sic"] is None
-                            else new_plan["max_sic"] - original_block["max_sic"]),
-                "length_grid_units": (
-                    None if original_block.get("route_length") is None
-                    else new_plan["route_length_grid_units"]
-                    - original_block["route_length"]),
-            },
-        },
+        "metrics": metrics_block,
         "algorithm": "A* + CostMap re-planned on the new real SIC field",
         "environment_change_note":
             "The route is recomputed against a different real SIC forecast "
@@ -1084,9 +1449,12 @@ def discover_iceberg() -> Dict[str, Any]:
         "path": None,
         "label": "Iceberg risk data NOT available",
         "searched": [str(c) for c in ICEBERG_CANDIDATES if c is not None],
-        "note": ("src/data/adapters.py::IcebergAdapter is an empty stub and "
-                 "routing_metadata.json marks the iceberg standoff cost term "
-                 "as deferred."),
+        "note": ("src/data/adapters.py::IcebergAdapter is fully implemented "
+                 "(load -> iceberg_risk in [0,1]), but no iceberg risk field "
+                 "exists on disk to feed it: only model weights are present "
+                 "(models/iceberg/best_sar_iceberg_model.pt, inference-only, "
+                 "pixel space) and routing_metadata.json marks the iceberg "
+                 "standoff cost term as deferred."),
     }
 
 
@@ -1274,7 +1642,7 @@ def route_profile(t: int, start_row: int, start_col: int,
     is synthesised — if a cell is NaN the sample is reported as null and is
     never filled in.
     """
-    grid, cost_map, _report = route_grid(t, _weights_key())
+    grid, cost_map, report = route_grid(t, _weights_key())
     result = astar(grid, (start_row, start_col), (goal_row, goal_col),
                    weights=cost_weights())
     path = [(int(r), int(c)) for r, c in result.path]
@@ -1309,11 +1677,16 @@ def route_profile(t: int, start_row: int, start_col: int,
     return {
         "timestep": t,
         "success": bool(result.success),
-        "date": str(f.dates[t])[:10],
+        "date": str(field().dates[t])[:10],
         "waypoints": int(result.num_waypoints),
         "route_length_grid_units": float(result.route_length),
         "total_cost": float(result.total_cost),
         "great_circle_length_km": round(cum, 2),
+        "layer_status": registry_to_dict(
+            report["registry"],
+            cost_layers=report["cost_breakdown"]["layers_in_cost"],
+            extras={"land_mask": report["land_mask"]}),
+        "cost_breakdown": report["cost_breakdown"],
         "samples": samples,
         "max_sic_index": max_idx,
         "max_sic": None if max_idx < 0 else round(float(max_val), 6),
@@ -1481,7 +1854,12 @@ def create_app() -> Flask:
         Plan a route from geographic coordinates against the real SIC field.
 
         Body: {start_lat, start_lon, goal_lat, goal_lon, timestep}
-        Optional: {snap: bool = true, max_snap_cells: int = 3}
+        Optional: {snap: bool = true, max_snap_cells: int = 3,
+                   preference: "balanced"|"risk_aware"|"distance_efficient"}
+
+        ``preference`` only selects an explicit CostWeights set for the SAME
+        A* + CostMap engine; omitting it keeps the server objective exactly as
+        configured.
 
         Rejects (HTTP 400, never a fabricated route) out-of-grid coordinates,
         non-finite values, endpoints with no navigable cell in range, and
@@ -1525,11 +1903,13 @@ def create_app() -> Flask:
         Re-optimize an existing route on a LATER real SIC forecast timestep.
 
         Body: {original_route: {path, start, goal, timestep, mean_sic, max_sic},
-               new_timestep: int, start?: {...}, goal?: {...}, snap?: bool}
+               new_timestep: int, start?: {...}, goal?: {...}, snap?: bool,
+               preference?: "balanced"|"risk_aware"|"distance_efficient"}
 
         Returns both routes, a like-for-like comparison and the real changed
         segments. Endpoints default to the original route's own endpoints, so
-        the only thing that changes is the environment.
+        the only thing that changes is the environment.  When no preference is
+        sent, the objective the original route was planned with is reused.
         """
         body = request.get_json(silent=True) or {}
         if not isinstance(body, dict):
@@ -1546,6 +1926,7 @@ def create_app() -> Flask:
             original=body.get("original_route"),
             new_timestep=body["new_timestep"],
             start=body.get("start"), goal=body.get("goal"), allow_snap=snap,
+            preference=body.get("preference"),
         ))
 
     # ---------------- dynamic rerouting ----------------

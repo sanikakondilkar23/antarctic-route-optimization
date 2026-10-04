@@ -1,54 +1,110 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Ship,
   Map,
   Snowflake,
   Waves,
   Route,
   ShieldAlert,
   Database,
-  Settings,
   X,
-  Radio,
   Compass,
-  Anchor,
-  Wind,
 } from 'lucide-react'
 import Logo from '../ui/Logo'
 import { cn } from '../../lib/utils'
+import { fetchHealth, fetchMetadata } from '../../lib/auroraApi'
 
 export const NAV_SECTIONS = [
   {
-    category: '01 EXPEDITION OPERATIONS',
+    category: '01 OPERATIONS',
     items: [
-      { to: '/dashboard', label: 'Operations Cockpit', icon: LayoutDashboard },
-      { to: '/map', label: 'Antarctic Map Explorer', icon: Map, badge: 'TACTICAL' },
-      { to: '/route-planner', label: 'Corridor Route Planner', icon: Route, badge: '3 PATHS' },
+      { to: '/dashboard', label: 'Mission Control', icon: LayoutDashboard },
+      { to: '/route-planner', label: 'Route Planner', icon: Route },
     ],
   },
   {
-    category: '02 TACTICAL SENSORS',
+    category: '02 ENVIRONMENT',
     items: [
-      { to: '/icebergs', label: 'Iceberg Radar & Drift', icon: Snowflake, count: '128' },
-      { to: '/sea-ice', label: 'Sea-Ice Forecasting', icon: Waves, badge: '7-DAY' },
+      { to: '/sea-ice', label: 'SIC Forecast', icon: Waves },
+      { to: '/icebergs', label: 'Iceberg Intelligence', icon: Snowflake },
+      { to: '/risk', label: 'Environmental Risk', icon: ShieldAlert },
     ],
   },
   {
-    category: '03 FLEET & HAZARDS',
-    items: [
-      { to: '/fleet', label: 'Research Fleet', icon: Ship, count: '4' },
-      { to: '/alerts', label: 'Hazard & Risk Alerts', icon: ShieldAlert, count: '3!', alert: true },
-    ],
-  },
-  {
-    category: '04 SYSTEM PROTOCOLS',
-    items: [
-      { to: '/data-sources', label: 'Sensor Feeds & Data', icon: Database },
-      { to: '/settings', label: 'Bridge Settings', icon: Settings },
-    ],
+    category: '03 SYSTEM',
+    items: [{ to: '/system-status', label: 'System', icon: Database }],
   },
 ]
+
+/** Real, verified endpoint facts - never a simulated status. */
+function BackendPulse() {
+  const [state, setState] = useState({ phase: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [health, meta] = await Promise.all([fetchHealth(), fetchMetadata()])
+        if (cancelled) return
+        setState({
+          phase: 'ready',
+          sic: health?.sic_artifact ? 'forecast artifact present' : 'forecast artifact MISSING',
+          days: meta?.n_timesteps ?? null,
+          grid: meta ? `${meta.n_rows}×${meta.n_cols}` : null,
+        })
+      } catch (err) {
+        if (cancelled) return
+        setState({ phase: 'offline', message: err?.message ?? 'backend unreachable' })
+      }
+    }
+    load()
+    const id = setInterval(load, 30000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
+  if (state.phase === 'loading') {
+    return <p className="font-mono text-[10px] text-mist">checking backend…</p>
+  }
+
+  if (state.phase === 'offline') {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="font-bold text-white">AURORA backend</span>
+          <span className="font-mono text-[10px] font-bold text-danger">OFFLINE</span>
+        </div>
+        <p className="font-mono text-[10px] leading-snug text-mist">{state.message}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-bold text-white">AURORA backend</span>
+        <span className="font-mono text-[10px] font-bold text-safe">ONLINE</span>
+      </div>
+      <div className="flex items-center justify-between font-mono text-[10px] text-mist">
+        <span>SIC artifact</span>
+        <span className={state.sic?.startsWith('forecast artifact present') ? 'text-safe' : 'text-warn'}>
+          {state.sic}
+        </span>
+      </div>
+      {state.days && (
+        <div className="flex items-center justify-between font-mono text-[10px] text-mist">
+          <span>Forecast window</span>
+          <span className="text-white/85">
+            {state.days} days · {state.grid}
+          </span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Sidebar({ open, onClose }) {
   return (
@@ -70,21 +126,27 @@ export default function Sidebar({ open, onClose }) {
           </button>
         </div>
 
-        {/* Station Navigation Quick-Context */}
+        {/* Verified route endpoints */}
         <div className="border-b border-white/10 p-3 bg-abyssal/40">
           <div className="rounded-xl border border-white/10 bg-abyssal-card/70 p-2.5 text-xs">
             <div className="flex items-center justify-between text-[11px] font-semibold text-mist">
-              <span className="inline-flex items-center gap-1.5"><Compass size={13} className="text-mint" /> PRIMARY TARGETS</span>
-              <span className="font-mono text-[10px] text-mint">SIMULATED</span>
+              <span className="inline-flex items-center gap-1.5">
+                <Compass size={13} className="text-azure" /> ROUTE ENDPOINTS
+              </span>
+              <span className="font-mono text-[10px] text-azure">VERIFIED</span>
             </div>
             <div className="mt-2 space-y-1 font-mono text-[11px]">
               <div className="flex items-center justify-between text-white/90">
-                <span>Bharati Station</span>
-                <span className="text-mist text-[10px]">69°24'S, 76°11'E</span>
+                <span>Cape Town</span>
+                <span className="text-mist text-[10px]">33.92°S, 18.42°E</span>
               </div>
               <div className="flex items-center justify-between text-white/90">
-                <span>Maitri Station</span>
-                <span className="text-mist text-[10px]">70°46'S, 11°44'E</span>
+                <span>Bharati approach</span>
+                <span className="text-mist text-[10px]">69.00°S, 76.25°E</span>
+              </div>
+              <div className="flex items-center justify-between text-white/90">
+                <span>Maitri approach</span>
+                <span className="text-mist text-[10px]">70.00°S, 10.50°E</span>
               </div>
             </div>
           </div>
@@ -97,7 +159,7 @@ export default function Sidebar({ open, onClose }) {
               <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-[0.2em] text-mist/60">
                 {section.category}
               </p>
-              {section.items.map(({ to, label, icon: Icon, badge, count, alert }) => (
+              {section.items.map(({ to, label, icon: Icon }) => (
                 <NavLink
                   key={to}
                   to={to}
@@ -106,55 +168,25 @@ export default function Sidebar({ open, onClose }) {
                     cn(
                       'group flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium transition',
                       isActive
-                        ? 'bg-gradient-to-r from-mint/15 to-mint/5 text-mint font-bold border border-mint/30 shadow-sm'
+                        ? 'bg-azure/10 text-ice font-bold border border-azure/30'
                         : 'text-mist hover:bg-white/5 hover:text-white'
                     )
                   }
                 >
                   <div className="flex items-center gap-2.5 truncate">
-                    <Icon size={16} className="shrink-0 transition group-hover:text-mint" />
+                    <Icon size={16} className="shrink-0 transition group-hover:text-azure" />
                     <span className="truncate">{label}</span>
                   </div>
-
-                  {count && (
-                    <span
-                      className={cn(
-                        'rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold',
-                        alert ? 'bg-danger/20 text-danger border border-danger/30 animate-pulse' : 'bg-white/5 text-mist'
-                      )}
-                    >
-                      {count}
-                    </span>
-                  )}
-
-                  {badge && (
-                    <span className="rounded border border-mint/25 bg-mint/10 px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider text-mint">
-                      {badge}
-                    </span>
-                  )}
                 </NavLink>
               ))}
             </div>
           ))}
         </nav>
 
-        {/* Flagship Vessel Status Dock */}
+        {/* Live backend status dock */}
         <div className="border-t border-white/10 p-3.5 bg-abyssal/60">
           <div className="rounded-xl border border-white/10 bg-abyssal-card/90 p-3">
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute h-full w-full animate-ping rounded-full bg-mint opacity-75" />
-                  <span className="relative h-2 w-2 rounded-full bg-mint" />
-                </span>
-                <span className="font-bold text-white">RV Bharati Explorer</span>
-              </div>
-              <span className="font-mono text-[11px] text-mint">13.4 kn</span>
-            </div>
-            <div className="mt-1.5 flex items-center justify-between text-[10px] text-mist">
-              <span>Heading: 172° (SSE)</span>
-              <span>Ice Risk: Low</span>
-            </div>
+            <BackendPulse />
           </div>
         </div>
       </aside>

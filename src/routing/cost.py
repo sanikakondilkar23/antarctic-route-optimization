@@ -42,10 +42,15 @@ Ice-class multiplier
     above 0 makes the ``+inf`` class genuinely impassable.
 
 Missing-data policy
-    A term is dropped for a cell when its layer is absent or non-finite
+    A term is dropped for a cell when its layer is absent or ``NaN``
     there.  ``omitted_cells`` records how many cells that happened for, so a
     route produced with a partially-covered layer is never presented as if
     the layer were complete.
+
+    ``+inf`` is NOT missing data: it is the committed impassable marker.  A
+    ``+inf`` cell keeps an infinite cost, so ``astar`` refuses to expand it.
+    ``impassable_cells`` records how many such cells an enabled term
+    created.
 
 This is a modelling choice, not a claim of physical optimality.  All weights
 are explicit, documented and configurable.
@@ -162,25 +167,47 @@ class CostMap:
     def __init__(self, grid: EnvironmentalGrid, weights: CostWeights):
         self.grid = grid
         self.weights = weights
+        self._impassable: Dict[str, int] = {}
         self._env_cost, self._terms, self._omitted = self._compute()
 
     # -- computation ------------------------------------------------------
 
     def _add(self, name: str, values: np.ndarray) -> None:
-        """Add one weighted term, omitting it where it is not finite."""
+        """
+        Add one weighted term.
+
+        Two distinct kinds of non-finite value exist in this project and they
+        must never be conflated:
+
+        * ``NaN`` means "no measurement here".  The term is dropped for that
+          cell so an unknown can never masquerade as a benign zero, and the
+          cell is counted in ``omitted_cells``.
+        * ``+inf`` is the committed POLARIS-style *impassable* marker used by
+          ``routing_multiplier_2026.npy`` (hard pack / unknown-but-forbidden).
+          It is propagated as an infinite cell cost, which makes ``astar``
+          skip the cell entirely (``math.isfinite(env_cost)`` gate) instead of
+          scoring it as free.  Those cells are counted in ``impassable_cells``.
+        """
         w = getattr(self.weights, f"w_{name}", 0.0)
         if w <= 0:
             return
         arr = np.asarray(values, dtype=np.float64)
-        finite = np.isfinite(arr)
-        if not finite.any():
+        impassable = np.isposinf(arr)
+        usable = np.isfinite(arr)
+        missing = ~(usable | impassable)
+
+        if not (usable.any() or impassable.any()):
             self._omitted[name] = int(self.grid.n_rows * self.grid.n_cols)
             return
+
         contribution = np.zeros_like(arr)
-        contribution[finite] = w * arr[finite]
+        contribution[usable] = w * arr[usable]
+        contribution[impassable] = np.inf
         self._env_cost = self._env_cost + contribution
         self._terms[name] = contribution
-        self._omitted[name] = int((~finite).sum())
+        self._omitted[name] = int(missing.sum())
+        if impassable.any():
+            self._impassable[name] = int(impassable.sum())
 
     def _compute(self):
         g = self.grid
@@ -192,6 +219,7 @@ class CostMap:
         self._env_cost = cost
         self._terms = terms
         self._omitted = omitted
+        self._impassable = {}
 
         if g.sic_mean is not None:
             self._add("sic", g.sic_mean)
@@ -233,8 +261,13 @@ class CostMap:
 
     @property
     def omitted_cells(self) -> Dict[str, int]:
-        """Cells where an enabled term had no finite value and was dropped."""
+        """Cells where an enabled term had no measurement (NaN) and was dropped."""
         return self._omitted
+
+    @property
+    def impassable_cells(self) -> Dict[str, int]:
+        """Cells an enabled term marked ``+inf`` (impassable), by term name."""
+        return self._impassable
 
     @property
     def layers_in_cost(self) -> List[str]:
@@ -261,6 +294,7 @@ class CostMap:
             "layers_in_cost": self.layers_in_cost,
             "terms": sorted(self._terms),
             "omitted_cells": dict(self._omitted),
+            "impassable_cells": dict(self._impassable),
             "total_cost_finite_cells": int(np.isfinite(self._env_cost).sum()),
             "total_cost_nonfinite_cells": int(
                 (~np.isfinite(self._env_cost)).sum()),

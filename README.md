@@ -3,21 +3,32 @@
 **AURORA** is the umbrella product. This repository is its **route-optimization** codebase, and it
 also ships the sea-ice-concentration (SIC) forecaster that feeds the router.
 
-| AURORA component | Lives in | Status (verified 2026-09-28) |
+| AURORA component | Lives in | Status (verified 2026-09-29) |
 |---|---|---|
 | SIC forecasting | `backend/src`, `backend/scripts` (PolarPath ConvLSTM, 3-seed ensemble) | **Trained.** Checkpoints committed: `backend/runs/final_10ch_3f_seed{0,1,2}/best_model.pt` (1,083,833 B each) |
 | Route optimization | `src/routing`, `src/ml/dynamic_reroute.py`, `backend/api/main.py` | **Implemented.** `POST /api/route/optimize`, `POST /api/route/reroute`, `GET /api/route`, safety/path validation included |
-| SAR iceberg detection | separate repo `sakshidas1-ux/sar-iceberg-detection` | **PENDING / SEPARATE REPOSITORY** — no iceberg detections are produced from this repo |
+| Routing API | `backend/api/main.py` (Flask, default port 8077) | **Running.** 15 `GET` + 2 `POST` routes; `/api/layers/status` reports per-layer `REAL` / `PARTIAL` / `NOT_AVAILABLE` provenance |
+| AURORA operator UI | `frontend/aurora` (React + Vite + MapLibre) | **Built.** Mission Control, Route Planner, SIC Forecast, Iceberg Intelligence, Environmental Risk, System |
+| Environmental layers | `src/data/{unified,adapters,layer_status}.py` | **SIC only in this deployment.** Wind, current, depth, iceberg and ice-class layers are implemented but have **no reachable data source**; each is reported `NOT_AVAILABLE`, never as 0 |
+| SAR iceberg detection | separate repo `sakshidas1-ux/sar-iceberg-detection` | **NOT AVAILABLE in this repo.** `backend/aurora/iceberg/risk.py` refuses to emit a risk field without georeferenced detections; no iceberg markers or trajectories are drawn |
 
 Verified facts:
 
 - `SIC MODEL IMPORT: PASS` — `sys.path.insert(0,'backend/src'); from model import ConvLSTMForecaster`
 - `TEST DATASET IMPORT: PASS` — `from test_dataset import TestDataset`
-- `python -m pytest tests/ -q` → **284 passed**
+- `python -m pytest tests/ -q` → **415 passed** (0 failed)
+- `GET /api/health` → `{"route_artifact":true,"sic_artifact":true,"status":"ok"}`; all 15 `GET`
+  routes and both `POST` routes return `200` with a well-formed payload; malformed bodies return
+  structured `400` errors rather than a fabricated result.
 - Iceberg hook in this repo: `src/data/adapters.py::IcebergAdapter` (expects a caller-supplied
-  risk field in [0,1]) and `GET /api/layers/status` reports `available: false`.
-  `backend/cache/routing_metadata.json` marks `iceberg_standoff: "deferred - no trajectory
-  predictor yet"`. The iceberg model itself lives in the separate repository above.
+  risk field in [0,1]) and `GET /api/layers/status` reports
+  `iceberg_risk: NOT_AVAILABLE`. `backend/cache/routing_metadata.json` marks
+  `iceberg_standoff: "deferred - no trajectory predictor yet"`. The SAR detector itself lives in
+  the separate repository above; its pixel-space detections have no georeference, so this repo
+  plots no iceberg markers, trajectories or risk scores.
+- No raw wind, current, bathymetry or ERA5/CMEMS product exists anywhere on this machine
+  (see **Environmental data audit** below), so those terms are **not** in the objective and are
+  rendered as `Data unavailable` in the UI.
 
 Known blocker (data, not code):
 
@@ -27,6 +38,79 @@ Known blocker (data, not code):
   real data is restored.
 
 The rest of this document describes the SIC forecaster itself.
+
+## System architecture
+
+Every arrow below is a real import or a real HTTP call in this repository.
+
+    raw datasets: NSIDC CDR v6, ERA5, CMEMS GLORYS12V1, GEBCO, iceberg detections
+        |            (NOT PRESENT ON THIS MACHINE - see "Environmental data audit")
+        |  src/data/preprocess.py, requires SIH_DATA_ROOT
+        v
+    backend/cache/*.npy  -----------------------------------------------.
+        |  routing_sic_2026.npy      (167,173,369) float32  real SIC, NaN = no reading
+        |  routing_multiplier_2026.npy                          1 / 2 / 8 / 50 / +inf
+        |  routing_dx.npy, routing_dy.npy                       real cell sizes
+        |  routing_land_extension.npy                           real GEBCO land mask
+        |  routing_station_goals.json                           Maitri / Bharati cells
+        |  uncertainty_2026.npy, true_2026.npy, valid_mask.npy  ensemble spread / truth
+        |  (routing_station_override.npy, routing_cost_x/y_2026.npy: committed but NOT read
+        |   by the router - see audit)
+        v
+    src/data/unified.py::build_route_grid()
+        SICForecastField.load()        NaN  -> cell non-navigable
+        build_grid_template()          173 x 369 @ 0.25 deg, lat -75..-32, lon -10..82
+        apply_land_extension_mask()    land -> cell non-navigable
+        attach_optional_layers()       every optional layer absent -> stays absent
+        v
+    src/environment/grid.py::EnvironmentalGrid        provenance travels with the data
+        v
+    src/routing/cost.py::CostMap      w_sic = 1, w_distance = 1, every other weight = 0
+        NaN  -> term omitted for that cell, counted in omitted_cells  (never reported as 0)
+        +inf -> infinite cell cost, A* will not expand it            (never a free cell)
+        v
+    src/routing/astar.py::astar()     8-connected, grid-unit distance heuristic
+        v
+    plan JSON: path, total_cost, mean/max SIC, validation, layer_status, cost_breakdown
+        v
+    backend/api/main.py  (Flask)
+        GET  /api/route, /api/route/at/<t>, /api/route/profile/<t>, /api/reroute/<t>
+        GET  /api/sic/<t>, /api/sic/metadata, /api/uncertainty/<t>, /api/uncertainty/summary
+        GET  /api/layers/status, /api/limitations, /api/system/status, /api/models/ensemble
+        GET  /api/current/<t>, /api/map/coastline, /api/health
+        POST /api/route/optimize, /api/route/reroute
+        v
+    frontend/aurora/src/lib/auroraApi.js
+        v
+    AURORA UI: Mission Control | Route Planner | SIC Forecast | Iceberg Intelligence
+               | Environmental Risk | System
+
+Two design rules hold end to end: a missing measurement is dropped and reported, never turned
+into a zero; and an advertised risk or cost term only appears if both its code path and its data
+are present.
+
+## Environmental data audit
+
+| Input | On disk | Real | Read by the router | Surfaced in the UI |
+|---|---|---|---|---|
+| Sea-ice concentration 2026 forecast | `backend/cache/routing_sic_2026.npy` | yes | **yes** — the only risk term in the objective | SIC map, exposure, cost breakdown |
+| Ensemble uncertainty / truth / class | `uncertainty_2026.npy`, `true_2026.npy`, `confidence_class_2026.npy` | yes | no (weight `w_unc = 0`) | coverage + interval panels, labelled "not in objective" |
+| GEBCO land mask | `routing_land_extension.npy` (330 land cells) | yes | **yes** — makes land non-navigable | `land_mask` provenance string |
+| Cell sizes | `routing_dx.npy`, `routing_dy.npy` | yes | partially — A* itself uses grid units, `route_length_km` uses them | distance tile, grid-units note |
+| Station goal cells | `routing_station_goals.json` | yes | **yes** — `STATION_GOALS_JSON` in `backend/config.py` | goal coordinates |
+| Ice-class multiplier | `routing_multiplier_2026.npy` | yes | only when `SIH_W_ICE_CLASS > 0` (default off) | reported `NOT_AVAILABLE` until enabled |
+| Station override disc | `routing_station_override.npy` | yes | **no** — wiring it in would make NaN-SIC cells traversable | not shown |
+| Legacy traversal cost | `routing_cost_x/y_2026.npy` | yes (SIC-derived) | **no** — superseded by `CostMap` | not shown |
+| Ocean current (CMEMS) | — | no | no | `NOT_AVAILABLE`, `/api/current/<t>` → `available:false` |
+| Wind (ERA5) | — | no | no | `NOT_AVAILABLE` |
+| Bathymetry / depth (GEBCO) | — | no | no | `NOT_AVAILABLE` |
+| Iceberg risk | — | no | no | `NOT_AVAILABLE`, `risk.py` refuses without georeferencing |
+| AIDs / AIS | — | no | no | `NOT_AVAILABLE` |
+
+Nothing connectable exists: the only NetCDF files on this machine are six single-point
+ERA5-Land time series under `C:\Users\Sanika\OneDrive\Desktop\SIH\` that are **100 % NaN**
+(0 finite values out of 672,192 per file), anchored at lat 0 / lon 0, and carrying `v10` but no
+`u10`. Connecting them would mean inventing a spatial field, so they are left unconnected.
 
 ## Overview
 
@@ -41,7 +125,19 @@ assets. The raw satellite/reanalysis downloads (~40 GB) and the regenerable ≥1
 cache are **not** committed (git ignores them — see the per-file size note in
 `.gitignore`), so the router and the frontend run directly from the committed artifacts.
 
-### Frontend
+### Frontend (AURORA operator UI — the primary UI)
+
+React + Vite + MapLibre, talking to the Flask API on `127.0.0.1:8077`:
+
+    cd frontend/aurora
+    npm install
+    npm run dev            # http://127.0.0.1:5173   (.env.local points at :8077)
+
+Pages: Mission Control, Route Planner, SIC Forecast, Iceberg Intelligence, Environmental Risk,
+System. Values the API does not publish render as `Data unavailable` with the reason — never as
+a fabricated `0`.
+
+### Frontend (legacy static SIC viewer)
 
 No build step and no backend process — `frontend/index.html` + `frontend/data/*` are
 pre-generated, static files:
@@ -273,6 +369,10 @@ Rationale text from `backend/cache/metrics_2025.json`. 2026 numbers: over/under 
 
 ## Interactive Frontend
 
+Two frontends ship here. **`frontend/aurora`** is AURORA, the React + MapLibre operator UI that
+drives the router through the Flask API (see the Quickstart). The remainder of this section
+describes the older static SIC viewer in **`frontend/`**.
+
 A self-contained static viewer (`frontend/`) for exploring predictions — no backend, no browser inference. Serve and open it:
 
     cd frontend
@@ -307,6 +407,9 @@ Stack: inline SVG + D3 v7 (the only external runtime dependency, from CDN); fram
 - **Resolution is 25 km.** Leads (1–10 km scale) and fine marginal-ice-zone structure are not resolved; VIIRS-scale (750 m) data is future work.
 - **Single region.** Trained on 10°W–80°E only; other sectors (Weddell, Ross) have different regimes and would require retraining.
 - **Land-cell encoding.** ~27% of input SIC pixels are exact zeros (land/pole-hole fill). The loss correctly excludes these targets, but the convolution still spreads zero-value land features into receptive fields of valid edge cells. There is no explicit "no data" input signal.
+- **Routing sees one risk term.** `CostMap` supports seven weighted terms, but only `w_sic` and `w_distance` are non-zero by default, and only `sic_mean` has data. Wind, current, depth, iceberg and ice-class are reported `NOT_AVAILABLE`; they are never substituted with zeros.
+- **`total_cost` is not a physical quantity.** The A* edge cost uses grid-unit distance (`DIRS_8`), so the objective mixes SIC in [0,1] with 8-connected step counts. `route_length_km` is the geodesic value and is reported separately; `routing_dx.npy` / `routing_dy.npy` are not used by the search itself.
+- **The station override disc is committed but not wired in.** `backend/cache/routing_station_override.npy` (60 cells, 50 km around Maitri/Bharati) is read by no code path, because applying it as-is would make NaN-SIC cells traversable and therefore zero-cost.
 
 ## What We Tried and Did Not Use
 
@@ -534,41 +637,45 @@ deployment, not for a prototype.
 ## Project Structure
 
 ```
-sic/
+antarctic_route_optimization/
 ├── README.md
 ├── requirements.txt
-├── .gitignore
-├── backend/
-│   ├── src/                  # Training / evaluation code
-│   │   ├── preprocess.py     # Align NSIDC + ERA5 + CMEMS → backend/data/processed
-│   │   ├── dataset.py        # SICDataset (train/val sliding windows)
-│   │   ├── test_dataset.py   # TestDataset (2026, 174 days → 167 samples)
-│   │   ├── model.py          # ConvLSTMForecaster (from-scratch ConvLSTMCell)
-│   │   ├── train.py          # Legacy 1-day trainer (debug / dry-run checks)
-│   │   ├── run_final.py      # Final 3-frame trainer (seeds 0/1/2)
-│   │   └── eval.py           # 2025 eval → backend/cache/metrics_2025.json, conformal split
-│   ├── scripts/              # One-off pipelines: preprocess_2026.py, inference_2026.py,
-│   │                         #   gate5_2026.py, conformal_3f.py, mask_fix_3f.py,
-│   │                         #   diagnose_3f.py, iiee_sweep.py, iiee_invariant_check.py,
-│   │                         #   prep_frontend_data.py, gen_metrics.py, write_html.py,
-│   │                         #   template.html, qa_plot.py, report.py, find_nsidc_2026.py
+├── src/                        # routing + data layer (imported by backend/api and tests)
 │   ├── data/
-│   │   ├── raw/              # NSIDC CDR v6, ERA5, CMEMS downloads (gitignored)
-│   │   ├── processed/        # sic/forcing/time/lat/lon .npy + sic_mean/std + norm_stats.json
-│   │   └── test_2026/        # Held-out 2026 arrays [174, ...]
-│   ├── runs/
-│   │   ├── final_10ch_3f_seed{0,1,2}/  # best_model.pt, metrics.json, training_log.csv
-│   │   └── _archive/         # Rejected/legacy experiments (ConvUNet, BCE, unweighted, ...)
-│   ├── cache/                # ensemble_*/true_*/uncertainty_*.npy, metrics_*.json,
-│   │                         #   dates_2026.npy, valid_mask.npy, uncertainty_stats.json
-│   └── plots/                # pred/true/dates .npy + metrics.json (2025 & 2026)
-└── frontend/                 # Interactive map viewer (built by backend/scripts/write_html.py)
-    ├── index.html            # built artifact — do not edit directly
-    ├── data/                 # frames/, values/, stations.json, coastline.json,
-    │                         #   horizon_metrics.json, metrics.json, lat/lon.json,
-    │                         #   valid_mask.npy, valid_mask.png
-    ├── _archive_2025/        # previous viewer generation (superseded)
-    └── _archive_singlehorizon/
+│   │   ├── unified.py          # build_route_grid() - SIC + grid + land + optional layers
+│   │   ├── sic_forecast.py     # SICForecastField: NaN cells are non-navigable
+│   │   ├── grid.py             # 173x369 @0.25deg template, model/extension band split
+│   │   ├── adapters.py         # CMEMS / wind / bathymetry / iceberg adapters (no data here)
+│   │   ├── layer_status.py     # REAL | PARTIAL | NOT_AVAILABLE provenance
+│   │   ├── paths.py            # cache + dataset path resolution (SIH_DATA_ROOT)
+│   │   └── builder.py, config.py, cmems_loader.py
+│   ├── routing/
+│   │   ├── cost.py             # CostMap: omitted_cells (NaN) vs impassable_cells (+inf)
+│   │   ├── astar.py            # 8-connected A*
+│   │   ├── current_model.py    # guarded by w_curr (0 by default)
+│   │   └── scenario_router.py, td_astar.py
+│   ├── environment/            # EnvironmentalGrid, synthetic smoke environments
+│   ├── ml/                     # route policy + dynamic reroute (see Limitations)
+│   └── uncertainty/            # cvar.py, scenarios.py (not reachable from the API)
+├── backend/
+│   ├── api/
+│   │   ├── main.py             # Flask REST API (default port 8077)
+│   │   └── iceberg_api.py
+│   ├── aurora/                 # iceberg risk + raster helpers (honest refusal path)
+│   ├── src/                    # SIC forecaster: model.py, dataset.py, run_final.py, eval.py
+│   ├── scripts/                # build_router.py, inference_2026.py, prep_frontend_data.py, ...
+│   ├── cache/                  # committed routing_* + uncertainty artifacts (the real inputs)
+│   ├── runs/final_10ch_3f_seed{0,1,2}/  # best_model.pt, metrics.json, training_log.csv
+│   ├── data/                   # raw/processed downloads (absent in this deployment)
+│   └── plots/
+├── frontend/
+│   ├── aurora/                 # AURORA operator UI: React + Vite + MapLibre
+│   │   └── src/{components,pages,lib,components/map}
+│   ├── index.html, data/       # legacy static SIC viewer (built artifact)
+│   └── route_demo/             # earlier route demo + Playwright QA harness
+├── dataset/audit/              # dataset_audit.json, dataset_connection.json (all UNRESOLVED)
+├── tests/                      # 415 tests: astar, layer semantics, API contract, forecast
+├── outputs/, experiments/, research/, scripts/, models/, data/
 ```
 
 ## Reproducing

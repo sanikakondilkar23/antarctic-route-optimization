@@ -1,44 +1,62 @@
 import { cn } from '../../lib/utils'
 
-const severityStyles = {
-  Critical: 'bg-danger/15 text-danger border-danger/20',
-  High: 'bg-danger/15 text-danger border-danger/20',
-  Warning: 'bg-warn/15 text-warn border-warn/20',
-  Moderate: 'bg-warn/15 text-warn border-warn/20',
-  Low: 'bg-safe/15 text-safe border-safe/20',
-  Information: 'bg-cyan/10 text-cyan border-cyan/15',
-  Active: 'bg-danger/15 text-danger border-danger/20',
-  Monitoring: 'bg-warn/15 text-warn border-warn/20',
-  Acknowledged: 'bg-cyan/10 text-cyan border-cyan/15',
-  Resolved: 'bg-safe/10 text-safe border-safe/15',
-  Available: 'bg-white/5 text-mist border-white/10',
-  Recommended: 'bg-safe/15 text-safe border-safe/20',
-  'En Route': 'bg-cyan/15 text-cyan border-cyan/20',
-  'At Station': 'bg-safe/10 text-safe border-safe/15',
-  Alert: 'bg-danger/15 text-danger border-danger/20',
+/**
+ * Compact status tags. Colours are muted and used only to reinforce a state
+ * that is also written out in text - never as decoration.
+ */
+const tones = {
+  ok: 'border-safe/40 bg-safe/10 text-safe',
+  warn: 'border-warn/40 bg-warn/10 text-warn',
+  bad: 'border-danger/40 bg-danger/10 text-danger',
+  info: 'border-ice/40 bg-ice/10 text-ice',
+  neutral: 'border-graphite-500 bg-graphite-800 text-mist',
 }
 
-export default function Badge({ value, className = '', children }) {
+const labelTone = {
+  REAL: 'ok',
+  PARTIAL: 'warn',
+  NOT_AVAILABLE: 'neutral',
+  NOT_CONNECTED: 'neutral',
+  SYNTHETIC: 'warn',
+  DEMO: 'warn',
+  Available: 'ok',
+  Ready: 'ok',
+  READY: 'ok',
+  'INTEGRATION READY': 'warn',
+  BLOCKED: 'bad',
+  Active: 'bad',
+  Warning: 'warn',
+  Critical: 'bad',
+  High: 'bad',
+  Moderate: 'warn',
+  Low: 'ok',
+}
+
+export default function Badge({ value, tone, className = '', children, dot = true }) {
   const label = value ?? children
-  const style = severityStyles[label] ?? 'bg-white/5 text-mist border-white/10'
+  const t = tone ?? labelTone[label] ?? 'neutral'
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold', style, className)}>
-      <span className="relative flex h-1.5 w-1.5">
-        <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-40', label === 'Critical' ? 'bg-danger' : label === 'Warning' ? 'bg-warn' : 'bg-cyan')} />
-        <span className={cn('relative inline-flex h-1.5 w-1.5 rounded-full', label === 'Critical' ? 'bg-danger' : label === 'Warning' ? 'bg-warn' : label === 'Low' || label === 'Resolved' ? 'bg-safe' : 'bg-cyan')} />
-      </span>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-[1px] font-mono text-[10px] font-medium uppercase tracking-[0.08em]',
+        tones[t] ?? tones.neutral,
+        className
+      )}
+    >
+      {dot && <span className={cn('h-1.5 w-1.5 rounded-full bg-current opacity-70')} />}
       {label}
     </span>
   )
 }
 
-export function Dot({ color = 'cyan', className = '' }) {
+export function Dot({ color = 'ice', className = '' }) {
   const c = {
-    cyan: 'bg-cyan',
+    ice: 'bg-ice',
     safe: 'bg-safe',
     warn: 'bg-warn',
     danger: 'bg-danger',
     mist: 'bg-mist',
+    steel: 'bg-steel',
   }[color] ?? 'bg-mist'
   return <span className={cn('inline-block h-2 w-2 rounded-full', c, className)} />
 }

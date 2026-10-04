@@ -250,8 +250,23 @@ class TestSystemStatus:
     def test_sic_checkpoints_detected_not_rerun(self, client):
         m = client.get("/api/system/status").get_json()["models"]["sic_forecaster"]
         assert m["present"] is True
-        assert len(m["checkpoints"]) >= 3
-        assert all(c["is_sic_forecaster"] for c in m["checkpoints"])
+        checkpoints = m["checkpoints"]
+        assert len(checkpoints) >= 3
+        # AURORA now also ships a non-SIC model (the SAR iceberg detector under
+        # models/iceberg/), so "every .pt found is a SIC forecaster" is no longer
+        # a valid expectation. The contract that matters is that the three
+        # trained SIC seeds are recognised as SIC forecasters, and that they are
+        # not claimed to have been re-run.
+        sic_forecaster = [c for c in checkpoints if c["is_sic_forecaster"]]
+        assert len(sic_forecaster) >= 3, (
+            f"expected >=3 SIC forecaster checkpoints, found "
+            f"{len(sic_forecaster)} in {[c['path'] for c in checkpoints]}"
+        )
+        # discovery reports native OS separators, so compare on a normalised form
+        found = {c["path"].replace("\\", "/") for c in sic_forecaster}
+        assert found >= {
+            f"backend/runs/final_10ch_3f_seed{i}/best_model.pt" for i in (0, 1, 2)
+        }
         # raw 2026 inputs are absent -> inference is NOT claimed
         assert m["inference_rerun_possible"] is False
 

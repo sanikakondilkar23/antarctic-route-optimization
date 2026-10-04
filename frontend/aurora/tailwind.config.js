@@ -1,3 +1,12 @@
+/**
+ * AURORA design tokens.
+ *
+ * Deep-navy polar operations interface: translucent glass surfaces, hairline
+ * ice borders, cool off-white type and a single cyan accent. The `graphite`
+ * ladder below is the legacy name kept for every existing `graphite-*`
+ * utility — it now steps through the navy surface ramp so components that
+ * still reference it sit on the same palette as everything else.
+ */
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
@@ -5,56 +14,98 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Deep Abyssal Obsidian & Slate base (replaces generic navy)
-        abyssal: '#080C14',
-        'abyssal-deck': '#0D1424',
-        'abyssal-card': '#131E34',
-        'abyssal-card-hover': '#182744',
-        'abyssal-border': 'rgba(255, 255, 255, 0.08)',
+        // Aurora Antarctic Cinematic Palette
+        antarctic: {
+          navy: '#05182B',
+          midnight: '#071D33',
+          ocean: '#0A2A4A',
+          glacier: '#EAF6FF',
+          ice: '#A9DFFF',
+          cyan: '#22E5F0',
+          sky: '#3AA7FF',
+          hazard: '#FF4D5E',
+        },
 
-        // Glacial Aurora & Polar Accents
-        mint: '#00F2C3',
-        'mint-glow': '#10E7B3',
-        azure: '#38BDF8',
-        'azure-deep': '#2563EB',
-        amethyst: '#818CF8',
-        ice: '#E0F7FF',
-        'ice-pale': '#A9E8FF',
+        // Core surfaces - legacy `graphite-*` name, navy surface ramp
+        graphite: {
+          950: '#031019',
+          900: '#05182B',
+          850: '#071D33',
+          800: '#0A2A4A',
+          750: '#0E3050',
+          700: '#153C63',
+          600: '#1C4974',
+          500: '#275B8A',
+        },
 
-        // Legacy semantic mappings redirected to the new cohesive system
-        navy: '#080C14',
-        'navy-deep': '#04070D',
-        'navy-mid': '#0D1424',
-        'navy-light': '#131E34',
-        ocean: '#1E3A8A',
-        'ocean-deep': '#0F2454',
-        cyan: '#00F2C3', // Accent points now use the vibrant Glacial Mint
-        'ice-cyan': '#38BDF8',
-        slate: '#1E293B',
-        mist: '#94A3B8',
-        safe: '#00F2C3',
-        'safe-dark': '#059669',
-        warn: '#F59E0B',
-        danger: '#FB7185',
-        'danger-deep': '#E11D48',
+        // Off-white typography scale (this is the "white" every component uses)
+        // Redefined so `text-white` renders as paper rather than pure #fff.
+        white: '#E9ECEF',
+
+        // Secondary / tertiary text
+        mist: '#9FB3C4',
+        steel: {
+          DEFAULT: '#7089A0',
+          dark: '#4E637A',
+        },
+
+        // The single restrained accent
+        ice: {
+          DEFAULT: '#22E5F0',
+          bright: '#A9DFFF',
+          dim: '#3AA7FF',
+          faint: '#0A2A4A',
+        },
+
+        // Alias kept so existing `cyan` / `azure` references stay on-accent
+        cyan: '#22E5F0',
+        azure: '#3AA7FF',
+        mint: '#22E5F0',
+
+        // Muted semantic tones
+        safe: '#74A17C',
+        warn: '#C39A4A',
+        danger: '#FF4D5E',
+
+        // Legacy surface aliases (older components) mapped onto graphite
+        abyssal: '#05182B',
+        'abyssal-deck': '#071D33',
+        'abyssal-card': '#0A2A4A',
+        'abyssal-card-hover': '#11355B',
+        navy: '#05182B',
+        'navy-deep': '#05182B',
+        'navy-mid': '#071D33',
+        'navy-light': '#0A2A4A',
+        ocean: '#0A2A4A',
+        'ocean-deep': '#05182B',
+        slate: '#172738',
+        amethyst: '#8896A3',
+        'ice-pale': '#EAF6FF',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        display: ['"Space Grotesk"', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'Menlo', 'Consolas', 'monospace'],
+        sans: ['"Plus Jakarta Sans"', 'Inter', '"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+        display: ['"Space Grotesk"', '"Plus Jakarta Sans"', '"IBM Plex Sans"', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'Menlo', 'Consolas', 'monospace'],
       },
       boxShadow: {
-        card: '0 4px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06)',
-        glow: '0 0 25px rgba(0, 242, 195, 0.18), 0 0 0 1px rgba(0, 242, 195, 0.3)',
-        'glow-azure': '0 0 25px rgba(56, 189, 248, 0.18), 0 0 0 1px rgba(56, 189, 248, 0.3)',
+        panel: '0 1px 2px rgba(0, 0, 0, 0.35)',
+        overlay: '0 8px 24px rgba(0, 0, 0, 0.45)',
+        card: '0 1px 2px rgba(0, 0, 0, 0.3)',
+        glow: '0 0 25px rgba(34, 229, 240, 0.25)',
+        'glow-cyan': '0 0 30px rgba(34, 229, 240, 0.35)',
+        'glow-azure': '0 0 30px rgba(58, 167, 255, 0.35)',
+        'glow-hazard': '0 0 30px rgba(255, 77, 94, 0.45)',
+        glass: '0 8px 32px 0 rgba(5, 24, 43, 0.5)',
+        '2xl': '0 8px 24px rgba(0, 0, 0, 0.4)',
       },
       backgroundImage: {
-        'abyssal-gradient':
-          'radial-gradient(120% 120% at 100% 0%, rgba(0,242,195,0.08) 0%, transparent 50%), radial-gradient(80% 80% at 0% 100%, rgba(37,99,235,0.12) 0%, transparent 50%), linear-gradient(180deg, #04070D 0%, #080C14 50%, #0D1424 100%)',
+        'abyssal-gradient': 'linear-gradient(180deg, #05182B 0%, #071D33 50%, #0A2A4A 100%)',
+        'hero-gradient': 'linear-gradient(180deg, rgba(5, 24, 43, 0.85) 0%, rgba(5, 24, 43, 0.4) 45%, rgba(7, 29, 51, 0.85) 85%, #05182B 100%)',
         'polar-grid':
-          'linear-gradient(rgba(0,242,195,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,242,195,0.03) 1px, transparent 1px)',
-        'hero-gradient':
-          'radial-gradient(120% 100% at 50% 0%, rgba(0,242,195,0.12) 0%, transparent 60%), linear-gradient(180deg, #04070D 0%, #080C14 100%)',
+          'linear-gradient(rgba(34, 229, 240, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(34, 229, 240, 0.05) 1px, transparent 1px)',
+      },
+      borderColor: {
+        DEFAULT: 'rgba(234, 246, 255, 0.1)',
       },
     },
   },

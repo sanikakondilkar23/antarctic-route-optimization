@@ -1,605 +1,458 @@
-import { useState } from 'react'
+/**
+ * RoutePlanning.jsx - the AURORA Route Optimizer.
+ *
+ * Every figure on this page comes from the backend's own response to
+ * POST /api/route/optimize, POST /api/route/reroute or
+ * GET /api/route/profile/<t>. Nothing is estimated client-side: distances are
+ * the API's great-circle sums, SIC values are read from the real forecast
+ * field along the returned path, and the cost profile is labelled with the
+ * objective the server reports as active.
+ */
+
+import { useCallback, useEffect, useState } from 'react'
 import {
-  Route,
-  Navigation,
-  Fuel,
-  CalendarDays,
-  Gauge,
-  ShieldCheck,
-  CloudRain,
-  Check,
-  Download,
-  Layers,
-  ArrowLeftRight,
-  MapPin,
-  Zap,
-  X,
   AlertTriangle,
-  FileCode,
-  Compass,
+  CheckCircle2,
+  Database,
+  Info,
+  LineChart as LineChartIcon,
+  MapPin,
+  Navigation,
+  ServerCrash,
+  XCircle,
 } from 'lucide-react'
 import PageHeader, { LiveChip } from '../components/ui/PageHeader'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
-import Button from '../components/ui/Button'
 import AntarcticMap from '../components/map/AntarcticMap'
-import { Marker, Popup } from 'react-leaflet'
-import { STATIONS, getCorridorRoutes } from '../data'
-import { cn } from '../lib/utils'
+import MissionPlanner from '../components/mission/MissionPlanner'
+import SicLegend from '../components/sic/SicLegend'
+import useSicForecast from '../hooks/useSicForecast'
+import { ChartCard, ChartTooltip } from '../components/charts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceDot } from 'recharts'
+import { fetchRouteProfile } from '../lib/auroraApi'
+
+const num = (v, d = 3) => (typeof v === 'number' ? v.toFixed(d) : '—')
+const km = (v) => (typeof v === 'number' ? `${v.toLocaleString(undefined, { maximumFractionDigits: 1 })} km` : '—')
+
+function Metric({ label, value, hint, tone }) {
+  return (
+    <div className="rounded-xl border border-white/5 bg-navy-deep/50 p-3">
+      <p className="text-[10px] uppercase tracking-wider text-mist">{label}</p>
+      <p
+        className={`mt-1 font-display text-lg font-bold ${
+          tone === 'warn' ? 'text-warn' : tone === 'danger' ? 'text-danger' : 'text-white'
+        }`}
+      >
+        {value}
+      </p>
+      {hint && <p className="mt-0.5 text-[10px] leading-snug text-mist/80">{hint}</p>}
+    </div>
+  )
+}
 
 export default function RoutePlanning() {
-  const [start, setStart] = useState('Cape Town')
-  const [destination, setDestination] = useState('Bharati Research Station')
-  const [vessel, setVessel] = useState('RV Bharati Explorer')
-  const [date, setDate] = useState('2026-10-01')
-  const [maxSpeed, setMaxSpeed] = useState(15)
-  const [fuelPref, setFuelPref] = useState('Balanced')
-  const [riskTolerance, setRiskTolerance] = useState('Low')
-  const [selected, setSelected] = useState('opt-lowice')
-  const [exported, setExported] = useState(false)
-  const [comparing, setComparing] = useState(false)
-  const [showRiskModal, setShowRiskModal] = useState(false)
-  const [routeConfirmed, setRouteConfirmed] = useState(false)
-  const [recomputing, setRecomputing] = useState(false)
+  const [plan, setPlan] = useState(null)
+  const [reroute, setReroute] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [profileError, setProfileError] = useState(null)
 
-  // Dynamically retrieve routes and polylines for chosen corridor
-  const { options: routeOptions, polylines: currentPolylines } = getCorridorRoutes(start, destination)
-  const selRoute = routeOptions.find((r) => r.id === selected) || routeOptions[0]
+  const sic = useSicForecast()
+  const sicRaster = sic.active?.available
+    ? { url: sic.active.url, bounds: sic.active.bounds, label: `SIC ${sic.date}` }
+    : null
 
-  const startStation = STATIONS.find((s) => s.name.includes(start)) || STATIONS[2]
-  const destStation = STATIONS.find((s) => s.name.includes(destination)) || STATIONS[0]
+  // Show the forecast day the route was planned against.
+  useEffect(() => {
+    if (typeof plan?.timestep === 'number') sic.setTimestep(plan.timestep)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.timestep])
 
-  const selectRoute = (id) => {
-    setSelected(id)
-    setExported(false)
-    setRouteConfirmed(false)
-  }
-
-  const handleGenerateRoutes = () => {
-    setRecomputing(true)
-    setTimeout(() => {
-      setRecomputing(false)
-    }, 800)
-  }
-
-  const handleConfirmRoute = () => {
-    setRouteConfirmed(true)
-    setTimeout(() => {
-      setRouteConfirmed(false)
-    }, 4000)
-  }
-
-  // Real GeoJSON file generation and download
-  const exportRoute = () => {
-    const rawCoords = currentPolylines[selRoute.id] || []
-    // GeoJSON coordinates standard: [longitude, latitude]
-    const geoJsonCoordinates = rawCoords.map(([lat, lon]) => [Number(lon.toFixed(4)), Number(lat.toFixed(4))])
-
-    const geoJsonData = {
-      type: 'FeatureCollection',
-      metadata: {
-        system: 'NAVIGLACE AI Antarctic Decision Support System',
-        problemStatement: 'SIH-26059',
-        disclaimer: 'Simulated operational planning data for prototype demonstration only',
-        exportedAt: new Date().toISOString(),
-        vessel: vessel,
-        corridor: `${start} to ${destination}`,
-        routeType: selRoute.label,
-        distanceKm: selRoute.distance,
-        distanceNm: selRoute.distanceNm,
-        estimatedTime: selRoute.time,
-        estimatedFuelTonnes: selRoute.fuel,
-        iceRisk: selRoute.iceRisk,
-        departureDate: date,
-      },
-      features: [
-        {
-          type: 'Feature',
-          properties: {
-            name: `${selRoute.label} Navigation Track`,
-            corridor: `${start} to ${destination}`,
-            routeId: selRoute.id,
-            status: selRoute.status,
-          },
-          geometry: {
-            type: 'LineString',
-            coordinates: geoJsonCoordinates,
-          },
-        },
-        ...rawCoords.map(([lat, lon], idx) => ({
-          type: 'Feature',
-          properties: {
-            name: idx === 0 ? `Departure - ${start}` : idx === rawCoords.length - 1 ? `Arrival - ${destination}` : `Waypoint ${idx}`,
-            waypointIndex: idx,
-            latitude: lat,
-            longitude: lon,
-          },
-          geometry: {
-            type: 'Point',
-            coordinates: [Number(lon.toFixed(4)), Number(lat.toFixed(4))],
-          },
-        })),
-      ],
+  const loadProfile = useCallback(async (p) => {
+    setProfileError(null)
+    try {
+      const body = await fetchRouteProfile(p.timestep, {
+        startRow: p.start?.cell?.[0],
+        startCol: p.start?.cell?.[1],
+        goalRow: p.goal?.cell?.[0],
+        goalCol: p.goal?.cell?.[1],
+      })
+      setProfile(body)
+    } catch (err) {
+      setProfile(null)
+      setProfileError(err?.message ?? 'Route profile unavailable.')
     }
+  }, [])
 
-    const blob = new Blob([JSON.stringify(geoJsonData, null, 2)], { type: 'application/geo+json' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `polar_route_${selRoute.id}_${start.replace(/\s+/g, '_').toLowerCase()}_to_${destination.replace(/\s+/g, '_').toLowerCase()}.geojson`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+  const handlePlan = useCallback(
+    (body) => {
+      setReroute(null)
+      setProfile(null)
+      loadProfile(body)
+    },
+    [loadProfile],
+  )
 
-    setExported(true)
-    setTimeout(() => setExported(false), 3000)
-  }
+  const handleReroute = useCallback(
+    (body) => {
+      setReroute(body)
+      if (body?.updated_route?.path) loadProfile({ ...plan, timestep: body.forecast_step_days + (plan?.timestep ?? 0) })
+    },
+    [plan, loadProfile],
+  )
+
+  const routeLatLngs = sic.metadata
+    ? (plan?.path ?? [])
+        .map(([r, c]) => {
+          const lat = sic.metadata.lat?.[r]
+          const lon = sic.metadata.lon?.[c]
+          return lat == null || lon == null ? null : [Number(lat), Number(lon)]
+        })
+        .filter(Boolean)
+    : []
+
+  const endpoints = plan
+    ? [
+        { lat: plan.start.lat, lon: plan.start.lon, label: 'Origin', kind: 'origin' },
+        { lat: plan.goal.lat, lon: plan.goal.lon, label: 'Destination', kind: 'goal' },
+      ]
+    : []
+
+  const profileData = (profile?.samples ?? []).map((s) => ({
+    x: s.cum_km,
+    sic: typeof s.sic === 'number' ? Number((s.sic * 100).toFixed(1)) : null,
+    km: s.cum_km,
+  }))
+  const maxPoint = profile?.max_sic_index >= 0 ? profileData[profile.max_sic_index] : null
+
+  const v = plan?.validation ?? null
+  const validationRows = v
+    ? [
+        ['Cells in bounds', v.all_cells_in_bounds],
+        ['Starts at requested origin', v.starts_at_start],
+        ['Reaches requested destination', v.reaches_goal],
+        ['8-connected / contiguous', v.contiguous_8_connected],
+        ['No non-navigable cell crossed', v.nan_cells === 0 && v.non_navigable_cells === 0],
+      ]
+    : []
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Route Planning"
-        subtitle="Design, evaluate, and compare simulated transits between Cape Town, Bharati, and Maitri research stations."
-        actions={<LiveChip label="Simulated planner" dot="warn" />}
+        title="Route Optimizer"
+        subtitle="A* + CostMap over the real 2026 SIC forecast field (0.25° grid, 173 × 369). The backend owns the algorithm; this page only collects inputs and reports what came back."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <LiveChip label="Real routing engine" dot="safe" />
+            <LiveChip label={sic.status === 'ready' ? `SIC ${sic.date}` : 'SIC unavailable'} dot={sic.status === 'ready' ? 'cyan' : 'warn'} />
+          </div>
+        }
       />
 
-      {routeConfirmed && (
-        <div className="flex items-center justify-between rounded-2xl border border-safe/30 bg-safe/10 px-5 py-3 text-safe shadow-glow">
-          <div className="flex items-center gap-2.5">
-            <Check size={18} className="shrink-0" />
-            <span className="text-sm font-semibold">
-              Route confirmed for {vessel}! Navigational waypoint package generated for {start} → {destination}.
-            </span>
-          </div>
-          <span className="text-xs font-mono opacity-80">{selRoute.label} · ETA {selRoute.time}</span>
-        </div>
-      )}
+      <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+        <MissionPlanner className="h-fit" onPlan={handlePlan} onReroute={handleReroute} metadata={sic.metadata} />
 
-      <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
-        {/* Input panel */}
-        <Card className="h-fit">
-          <Card.Header title="Voyage Parameters" subtitle="Define the transit corridor" icon={Route} />
-          <Card.Body className="space-y-4">
-            <label className="block">
-              <span className="input-label">Starting location</span>
-              <select
-                className="input"
-                value={start}
-                onChange={(e) => {
-                  setStart(e.target.value)
-                  if (e.target.value === destination) {
-                    setDestination(e.target.value === 'Cape Town' ? 'Bharati Research Station' : 'Cape Town')
-                  }
-                }}
-              >
-                {STATIONS.map((s) => (
-                  <option key={s.id} value={s.name.includes('Bharati') ? 'Bharati Research Station' : s.name.includes('Maitri') ? 'Maitri Research Station' : 'Cape Town'} className="bg-navy-mid">
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="input-label">Destination</span>
-              <select
-                className="input"
-                value={destination}
-                onChange={(e) => {
-                  setDestination(e.target.value)
-                  if (e.target.value === start) {
-                    setStart(e.target.value === 'Bharati Research Station' ? 'Cape Town' : 'Bharati Research Station')
-                  }
-                }}
-              >
-                {['Bharati Research Station', 'Maitri Research Station', 'Cape Town']
-                  .filter((d) => d !== start)
-                  .map((d) => (
-                    <option key={d} value={d} className="bg-navy-mid">{d}</option>
-                  ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="input-label">Vessel selection</span>
-              <select className="input" value={vessel} onChange={(e) => setVessel(e.target.value)}>
-                {['RV Bharati Explorer', 'RV Maitri Voyager', 'RV Polar Researcher', 'RV Polar Scout'].map((v) => (
-                  <option key={v} value={v} className="bg-navy-mid">{v}</option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="input-label">Departure date</span>
-              <input type="date" className="input" value={date} onChange={(e) => setDate(e.target.value)} />
-            </label>
-
-            <label className="block">
-              <span className="input-label flex justify-between">
-                <span>Maximum vessel speed</span>
-                <span className="font-mono text-cyan">{maxSpeed} kn</span>
-              </span>
-              <input
-                type="range"
-                min="8"
-                max="18"
-                value={maxSpeed}
-                onChange={(e) => setMaxSpeed(+e.target.value)}
-                className="w-full accent-cyan"
-              />
-            </label>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="input-label">Fuel preference</span>
-                <select className="input" value={fuelPref} onChange={(e) => setFuelPref(e.target.value)}>
-                  {['Efficient', 'Balanced', 'Fastest'].map((f) => <option key={f} value={f} className="bg-navy-mid">{f}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="input-label">Risk tolerance</span>
-                <select className="input" value={riskTolerance} onChange={(e) => setRiskTolerance(e.target.value)}>
-                  {['Low', 'Moderate'].map((r) => <option key={r} value={r} className="bg-navy-mid">{r}</option>)}
-                </select>
-              </label>
-            </div>
-
-            <button
-              className="btn-primary w-full"
-              onClick={handleGenerateRoutes}
-              disabled={recomputing}
-            >
-              <Zap size={15} className={recomputing ? 'animate-spin' : ''} />
-              {recomputing ? 'Calculating alternatives…' : 'Generate Route Options'}
-            </button>
-          </Card.Body>
-        </Card>
-
-        {/* Map */}
         <Card className="overflow-hidden">
           <Card.Header
-            title="Interactive Route Corridor"
-            subtitle={`${start} → ${destination} · Multi-criteria Alternatives`}
+            title="Planned corridor"
+            subtitle={
+              plan
+                ? `${plan.start.lat.toFixed(2)}°, ${plan.start.lon.toFixed(2)}° → ${plan.goal.lat.toFixed(2)}°, ${plan.goal.lon.toFixed(2)}° · ${plan.date}`
+                : 'No route yet — set a mission in the planner'
+            }
             icon={Navigation}
             action={
-              <div className="flex items-center gap-2">
-                <span className="chip text-xs"><MapPin size={12} className="text-cyan" /> Origin & Target Plotted</span>
-              </div>
+              plan ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge value="Real A* route" />
+                  <span className="font-mono text-[11px] text-mist">{plan.algorithm}</span>
+                </div>
+              ) : null
             }
           />
           <div className="p-3">
             <AntarcticMap
-              center={[(startStation.lat + destStation.lat) / 2, (startStation.lon + destStation.lon) / 2]}
+              center={[-60, 45]}
               zoom={3}
-              height={440}
-              activeRoute={selected}
-              customPolylines={currentPolylines}
-              layers={{ vessels: true, icebergs: true, stations: true, routes: true, seaIce: true, wind: false, oceanCurrents: false }}
+              height={520}
+              sicRaster={sicRaster}
+              sicRasterOpacity={0.8}
+              showSeaIce={Boolean(sicRaster)}
+              routeLine={routeLatLngs}
+              endpoints={endpoints}
               className="!rounded-xl"
-            >
-              <Marker position={[startStation.lat, startStation.lon]}>
-                <Popup>
-                  <div className="min-w-[180px]">
-                    <p className="font-bold text-white text-sm">Origin: {startStation.name}</p>
-                    <p className="text-xs text-cyan">{startStation.country}</p>
-                    <p className="text-[11px] font-mono text-mist mt-1">{startStation.lat.toFixed(2)}°S / {Math.abs(startStation.lon).toFixed(2)}°E</p>
-                  </div>
-                </Popup>
-              </Marker>
-              <Marker position={[destStation.lat, destStation.lon]}>
-                <Popup>
-                  <div className="min-w-[180px]">
-                    <p className="font-bold text-white text-sm">Destination: {destStation.name}</p>
-                    <p className="text-xs text-cyan">{destStation.country}</p>
-                    <p className="text-[11px] font-mono text-mist mt-1">{destStation.lat.toFixed(2)}°S / {Math.abs(destStation.lon).toFixed(2)}°E</p>
-                  </div>
-                </Popup>
-              </Marker>
-            </AntarcticMap>
+            />
           </div>
-        </Card>
-      </div>
-
-      {/* Route option cards */}
-      <Card>
-        <Card.Header
-          title="Route Alternatives"
-          subtitle={`Simulated options for ${start} → ${destination}`}
-          icon={Layers}
-          action={
-            <button
-              className="btn-secondary !px-3.5 !py-1.5 !text-xs"
-              onClick={() => setComparing(true)}
-            >
-              <ArrowLeftRight size={13} /> Compare All Routes
-            </button>
-          }
-        />
-        <Card.Body>
-          <div className="grid gap-4 lg:grid-cols-3">
-            {routeOptions.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => selectRoute(r.id)}
-                className={cn(
-                  'rounded-2xl border p-5 text-left transition',
-                  selected === r.id
-                    ? 'border-cyan/60 bg-cyan/10 shadow-glow ring-1 ring-cyan/30'
-                    : 'border-white/5 bg-navy-deep/40 hover:border-white/15'
-                )}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-bold text-white">{r.label}</p>
-                    <p className="text-[11px] uppercase tracking-wide text-cyan font-semibold">{r.tag}</p>
-                  </div>
-                  {selected === r.id ? (
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan text-navy shadow-glow">
-                      <Check size={14} />
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-mist/60 border border-white/10 px-2 py-0.5 rounded-full">Select</span>
-                  )}
-                </div>
-
-                <div className="mt-4 space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-mist">Track Distance</span>
-                    <span className="font-mono font-semibold text-white">{r.distance.toLocaleString()} km ({r.distanceNm} nm)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-mist">Voyage Duration</span>
-                    <span className="font-mono font-semibold text-white">{r.time}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-mist">Estimated Fuel</span>
-                    <span className="font-mono font-semibold text-white">{r.fuel} tonnes</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-mist">Ice Risk</span>
-                    <Badge value={r.iceRisk} />
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-mist">Weather Risk</span>
-                    <Badge value={r.weatherRisk} />
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between gap-2 border-t border-white/5 pt-3">
-                  <Badge value={r.status === 'Recommended' ? 'Recommended' : 'Available'} />
-                  <span className="text-[11px] text-mist truncate">{r.options[0]}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </Card.Body>
-      </Card>
-
-      {/* Selected route detail */}
-      <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-        <Card className="overflow-hidden">
-          <Card.Header
-            title="Selected Route Analysis"
-            subtitle={`${selRoute.label} · ${vessel} · Corridor: ${start} → ${destination}`}
-            icon={Navigation}
-            action={<Badge value={selRoute.status} />}
-          />
-          <Card.Body>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="space-y-2.5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-mist">Route Attributes & Safeguards</p>
-                {selRoute.options.map((o) => (
-                  <div key={o} className="flex items-start gap-2.5 rounded-xl border border-white/5 bg-navy-deep/50 px-3.5 py-2 text-xs text-white/85">
-                    <ShieldCheck size={14} className="mt-0.5 shrink-0 text-safe" />
-                    <span>{o}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-2.5">
-                <p className="text-xs font-semibold uppercase tracking-wider text-mist">Voyage Performance Indices</p>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {[
-                    [Fuel, 'Est. Fuel', `${selRoute.fuel} tonnes`],
-                    [Navigation, 'Voyage Time', selRoute.time],
-                    [Gauge, 'Avg Speed', `${Math.round(maxSpeed * 0.76)} kn`],
-                    [CalendarDays, 'Departure', date],
-                    [Compass, 'Waypoints', `${selRoute.waypointsCount || 8} points`],
-                    [CloudRain, 'Weather Risk', `${selRoute.weatherRiskScore || 45}/100`],
-                  ].map(([Icon, l, v]) => (
-                    <div key={l} className="rounded-xl border border-white/5 bg-navy-deep/50 p-3">
-                      <Icon size={14} className="text-cyan" />
-                      <p className="mt-1 text-sm font-semibold text-white">{v}</p>
-                      <p className="text-[10px] uppercase tracking-wider text-mist">{l}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Card.Body>
-        </Card>
-
-        <Card className="h-fit">
-          <Card.Header title="Navigation Actions" icon={Zap} />
-          <Card.Body className="space-y-3">
-            <Button className="w-full" onClick={handleConfirmRoute}>
-              <Navigation size={15} /> Confirm & Dispatch Route
-            </Button>
-            <Button variant="secondary" className="w-full" onClick={exportRoute}>
-              <Download size={15} /> {exported ? 'GeoJSON Exported ✓' : 'Export Valid GeoJSON'}
-            </Button>
-            <Button variant="secondary" className="w-full" onClick={() => setShowRiskModal(true)}>
-              <CloudRain size={15} /> View Risk Breakdown
-            </Button>
-
-            {exported && (
-              <p className="rounded-xl border border-safe/20 bg-safe/10 px-3 py-2 text-center text-xs text-safe font-medium">
-                Standard GeoJSON FeatureCollection downloaded to device.
+          <div className="border-t border-white/5 px-5 py-3">
+            {sicRaster ? (
+              <SicLegend legend={sic.active.legend} stats={sic.active.stats} />
+            ) : (
+              <p className="text-[11px] leading-relaxed text-warn">
+                SIC raster unavailable{sic.error ? `: ${sic.error.message}` : '.'} The map shows the
+                basemap and the returned route only — no concentration field is invented.
               </p>
             )}
-
-            <div className="mt-1 rounded-xl border border-white/5 bg-navy-deep/50 p-3 text-[11px] leading-relaxed text-mist">
-              <span className="font-semibold text-white/80 block mb-0.5">Maritime Safety Note:</span>
-              Alternative routes are simulated by mathematical optimization for this prototype. Real Antarctic
-              navigation requires verified hydrographic charting, marine radar, and master ice-pilot approval.
-            </div>
-          </Card.Body>
+          </div>
         </Card>
       </div>
 
-      {/* Compare Routes Modal */}
-      {comparing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/80 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl border border-white/10 bg-navy p-6 shadow-2xl scrollbar-thin">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-5">
-              <div>
-                <h3 className="font-display text-xl font-bold text-white flex items-center gap-2">
-                  <ArrowLeftRight size={18} className="text-cyan" />
-                  Route Comparison: {start} → {destination}
-                </h3>
-                <p className="text-xs text-mist mt-0.5">Multi-criteria comparative trade-off matrix</p>
-              </div>
-              <button
-                onClick={() => setComparing(false)}
-                className="rounded-xl p-2 text-mist hover:bg-white/5 hover:text-white"
-              >
-                <X size={18} />
-              </button>
-            </div>
+      {!plan && (
+        <Card>
+          <Card.Body className="flex flex-col items-center gap-2 py-10 text-center">
+            <Info size={22} className="text-mist" />
+            <p className="text-sm font-semibold text-white/85">No route calculated yet</p>
+            <p className="max-w-xl text-xs leading-relaxed text-mist">
+              Choose an origin, destination and forecast day above and press <em>Calculate route</em>.
+              The backend returns HTTP 400 (never a fabricated path) for endpoints outside the grid,
+              endpoints that are not navigable, or a destination that cannot be reached.
+            </p>
+          </Card.Body>
+        </Card>
+      )}
 
-            <div className="grid gap-4 md:grid-cols-3">
-              {routeOptions.map((r) => {
-                const isCurrent = selected === r.id
-                return (
-                  <div
-                    key={r.id}
-                    className={cn(
-                      'rounded-2xl border p-5 flex flex-col justify-between transition',
-                      isCurrent
-                        ? 'border-cyan bg-cyan/10 shadow-glow'
-                        : 'border-white/10 bg-navy-deep/60'
+      {plan && (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Track length" value={km(plan.route_length_km)} hint={plan.route_length_km_note} />
+            <Metric label="Straight-line distance" value={km(plan.direct_length_km)} hint="great-circle start → destination" />
+            <Metric label="Mean SIC on path" value={num(plan.mean_sic)} hint="from the forecast field at this day" />
+            <Metric
+              label="Max SIC on path"
+              value={num(plan.max_sic)}
+              tone={plan.max_sic >= 0.7 ? 'warn' : undefined}
+              hint="highest concentration the track passes through"
+            />
+            <Metric label="Waypoints" value={plan.waypoints} hint={`${plan.route_length} grid cells (route_length_units: ${plan.route_length_units})`} />
+            <Metric label="Total cost" value={num(plan.total_cost)} hint={`A* cost under the active weights · ${plan.expanded_nodes} nodes expanded`} />
+            <Metric label="Non-navigable cells" value={plan.nan_cells + plan.non_navigable_cells} tone={plan.nan_cells + plan.non_navigable_cells === 0 ? undefined : 'danger'} hint="NaN cells on the path — must be 0" />
+            <Metric label="Forecast day" value={`D+${plan.timestep}`} hint={plan.date} />
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
+            <ChartCard
+              title="Sea-ice concentration along the track"
+              subtitle={
+                profile
+                  ? `${profile.waypoints} waypoints · ${profile.great_circle_length_km} km great-circle · ${profile.date}`
+                  : profileError
+                    ? 'profile unavailable'
+                    : 'loading real profile…'
+              }
+              action={<span className="inline-flex items-center gap-1 font-mono text-xs text-ice"><LineChartIcon size={13} /> % SIC</span>}
+              height={280}
+            >
+              {profileError ? (
+                <p className="pt-6 text-center text-xs text-warn">{profileError}</p>
+              ) : profileData.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={profileData} margin={{ top: 8, right: 12, left: -14, bottom: 0 }}>
+                    <CartesianGrid stroke="rgba(148,163,184,0.08)" strokeDasharray="4 4" />
+                    <XAxis
+                      dataKey="km"
+                      type="number"
+                      domain={['dataMin', 'dataMax']}
+                      stroke="rgba(148,163,184,0.4)"
+                      tick={{ fill: '#7c8ea6', fontSize: 11 }}
+                      tickFormatter={(v) => `${Math.round(v)}`}
+                      label={{ value: 'km along track', position: 'insideBottom', offset: -2, fill: '#7c8ea6', fontSize: 10 }}
+                    />
+                    <YAxis
+                      stroke="rgba(148,163,184,0.4)"
+                      tick={{ fill: '#7c8ea6', fontSize: 11 }}
+                      unit="%"
+                      domain={[0, 100]}
+                    />
+                    <Tooltip content={<ChartTooltip unit="%" />} />
+                    <Line
+                      type="monotone"
+                      dataKey="sic"
+                      name="SIC"
+                      stroke="#7DD3FC"
+                      strokeWidth={2}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                    {maxPoint && (
+                      <ReferenceDot x={maxPoint.x} y={maxPoint.sic} r={4} fill="#F59E0B" stroke="none" />
                     )}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs uppercase font-bold text-cyan">{r.tag}</span>
-                        <Badge value={r.status} />
-                      </div>
-                      <h4 className="font-bold text-white text-base">{r.label}</h4>
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="pt-6 text-center text-xs text-mist">Waiting for the route profile…</p>
+              )}
+            </ChartCard>
 
-                      <div className="mt-4 space-y-3 text-xs border-t border-b border-white/10 py-3">
-                        <div className="flex justify-between">
-                          <span className="text-mist">Distance</span>
-                          <span className="font-mono font-bold text-white">{r.distance.toLocaleString()} km ({r.distanceNm} nm)</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-mist">Transit Time</span>
-                          <span className="font-mono font-bold text-white">{r.time}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-mist">Fuel Consumption</span>
-                          <span className="font-mono font-bold text-white">{r.fuel} tonnes</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-mist">Ice Risk Index</span>
-                          <span className={cn('font-mono font-bold', r.iceRisk === 'High' ? 'text-danger' : r.iceRisk === 'Moderate' ? 'text-warn' : 'text-safe')}>
-                            {r.iceRiskScore || 50} / 100 ({r.iceRisk})
+            <Card>
+              <Card.Header title="Path validation" subtitle="reported by the backend" icon={CheckCircle2} />
+              <Card.Body className="space-y-2">
+                {validationRows.map(([label, ok]) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between rounded-lg border border-white/5 bg-navy-deep/40 px-3 py-2 text-xs"
+                  >
+                    <span className="text-white/85">{label}</span>
+                    {ok ? (
+                      <span className="inline-flex items-center gap-1 font-mono text-safe">
+                        <CheckCircle2 size={13} /> PASS
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-mono text-danger">
+                        <XCircle size={13} /> FAIL
+                      </span>
+                    )}
+                  </div>
+                ))}
+                <p className="pt-1 text-[11px] leading-relaxed text-mist">
+                  Maximum step {v?.max_step_cells ?? '—'} cell(s). Endpoint cells:{' '}
+                  <span className="font-mono">
+                    {plan.start.cell[0]},{plan.start.cell[1]} → {plan.goal.cell[0]},{plan.goal.cell[1]}
+                  </span>
+                </p>
+              </Card.Body>
+            </Card>
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <Card>
+              <Card.Header title="Cost breakdown" subtitle="weights are server configuration" icon={LineChartIcon} />
+              <Card.Body className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(plan.cost_weights ?? {})
+                    .filter(([k, val]) => k !== 'vessel_draft_m' && Number.isFinite(Number(val)))
+                    .map(([k, val]) => (
+                      <span
+                        key={k}
+                        className={`rounded-lg border px-2.5 py-1 font-mono text-[11px] ${
+                          Number(val) > 0
+                            ? 'border-ice/30 bg-ice/10 text-ice'
+                            : 'border-white/10 bg-white/5 text-mist/60'
+                        }`}
+                      >
+                        {k} = {val}
+                      </span>
+                    ))}
+                </div>
+                {plan.cost_breakdown && (
+                  <div className="space-y-1.5 font-mono text-[11px] text-mist">
+                    {Object.entries(plan.cost_breakdown)
+                      .filter(([k]) => k !== 'layers_in_cost')
+                      .map(([k, val]) => (
+                        <div key={k} className="flex items-center justify-between border-b border-white/5 pb-1">
+                          <span>{k}</span>
+                          <span className="text-white/85">
+                            {typeof val === 'number' ? num(val, 4) : JSON.stringify(val)}
                           </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-mist">Weather Risk</span>
-                          <span className="font-mono font-bold text-white">{r.weatherRiskScore || 40} / 100</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-mist">Estimated CO₂</span>
-                          <span className="font-mono font-bold text-white">{r.co2Tonnes || 1800} tonnes</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 space-y-1.5 text-[11px] text-mist">
-                        <p className="font-semibold text-white/80">Key Operational Features:</p>
-                        {r.options.map((opt, i) => (
-                          <div key={i} className="flex items-start gap-1.5">
-                            <span className="text-cyan">•</span>
-                            <span>{opt}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mt-6 pt-4 border-t border-white/5">
-                      <Button
-                        variant={isCurrent ? 'primary' : 'secondary'}
-                        className="w-full text-xs"
-                        onClick={() => {
-                          setSelected(r.id)
-                          setComparing(false)
-                        }}
-                      >
-                        {isCurrent ? 'Active Route' : 'Select This Route'}
-                      </Button>
+                      ))}
+                    <div className="flex items-center justify-between">
+                      <span>layers in cost</span>
+                      <span className="text-white/85">
+                        {(plan.cost_breakdown.layers_in_cost ?? []).join(', ') || '—'}
+                      </span>
                     </div>
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Risk Breakdown Modal */}
-      {showRiskModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-deep/80 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-2xl rounded-3xl border border-white/10 bg-navy p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
-              <h3 className="font-display text-lg font-bold text-white flex items-center gap-2">
-                <AlertTriangle size={18} className="text-warn" />
-                Navigational Risk Assessment: {selRoute.label}
-              </h3>
-              <button onClick={() => setShowRiskModal(false)} className="rounded-xl p-2 text-mist hover:bg-white/5 hover:text-white">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="rounded-xl border border-warn/20 bg-warn/10 p-3.5 text-warn">
-                <p className="font-bold mb-1">Polar Code Risk Category B / C</p>
-                <p className="text-white/85 leading-relaxed">
-                  The vessel is scheduled to enter waters with potential multi-year sea ice presence between 62°S and 70°S.
-                  Continuous radar monitoring and optical searchlights required during twilight.
+                )}
+                <p className="text-[11px] leading-relaxed text-mist">
+                  Terms with weight 0 are not part of the objective. The UI never claims a route used
+                  an unconfigured profile.
                 </p>
-              </div>
+              </Card.Body>
+            </Card>
 
-              <div className="rounded-xl border border-white/5 bg-navy-deep/50 p-3.5 space-y-2">
-                <p className="font-semibold text-white">Proximate Iceberg Threats:</p>
-                <div className="space-y-1.5 text-mist">
-                  <div className="flex justify-between">
-                    <span>Demo-ICE-001 (Tabular, 26 km²)</span>
-                    <span className="font-mono text-danger font-bold">12 km to corridor</span>
+            <Card>
+              <Card.Header title="Provenance" subtitle="what produced this route" icon={Database} />
+              <Card.Body className="space-y-2">
+                {Object.entries(plan.provenance ?? {}).map(([k, val]) => (
+                  <div key={k} className="rounded-lg border border-white/5 bg-navy-deep/40 px-3 py-2">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-mist">{k}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-white/85">{String(val)}</p>
                   </div>
-                  <div className="flex justify-between">
-                    <span>A23A fragment cluster</span>
-                    <span className="font-mono text-warn font-semibold">42 km to corridor</span>
-                  </div>
+                ))}
+              </Card.Body>
+            </Card>
+          </div>
+
+          {reroute && (
+            <Card>
+              <Card.Header
+                title="Reroute comparison"
+                subtitle={`${reroute.origin_date} → ${reroute.new_date} (D+${reroute.forecast_step_days})`}
+                icon={Navigation}
+                action={<Badge value={reroute.status === 'SUCCESS' ? 'Recommended' : 'Warning'} />}
+              />
+              <Card.Body className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <Metric label="Original max SIC" value={num(reroute.metrics?.original?.max_sic)} />
+                  <Metric label="Rerouted max SIC" value={num(reroute.metrics?.updated?.max_sic)} />
+                  <Metric label="Changed cells" value={reroute.route_comparison?.changed_cells ?? '—'} />
+                  <Metric
+                    label="Overlap (Jaccard)"
+                    value={
+                      typeof reroute.route_comparison?.jaccard_overlap === 'number'
+                        ? reroute.route_comparison.jaccard_overlap.toFixed(3)
+                        : '—'
+                    }
+                  />
                 </div>
-              </div>
+                <div className="space-y-1.5">
+                  {(reroute.changed_segments ?? []).map((sg, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between rounded-lg border border-white/5 bg-navy-deep/40 px-3 py-2 font-mono text-[11px]"
+                    >
+                      <span className="text-white/85">
+                        {sg.route} · {sg.from_cell?.join(',')} → {sg.to_cell?.join(',')}
+                      </span>
+                      <span className="text-mist">
+                        {sg.cells} cells · {sg.length_grid_units} grid units
+                      </span>
+                    </div>
+                  ))}
+                  {(reroute.changed_segments ?? []).length === 0 && (
+                    <p className="text-xs text-safe">
+                      No segment changed on the later forecast day — an identical corridor is a real
+                      result, not a missing one.
+                    </p>
+                  )}
+                </div>
+                <p className="text-[11px] leading-relaxed text-mist">{reroute.reroute_logic}</p>
+              </Card.Body>
+            </Card>
+          )}
 
-              <div className="rounded-xl border border-white/5 bg-navy-deep/50 p-3.5 space-y-2">
-                <p className="font-semibold text-white">Katabatic Wind & Sea-State Advisory:</p>
-                <p className="text-mist leading-relaxed">
-                  Continental margin approaches to Bharati and Maitri regularly experience violent katabatic wind events
-                  reaching 50–65 knots. Recommended entry window is between 04:00 and 10:00 UTC.
-                </p>
-              </div>
-            </div>
+          <Card>
+            <Card.Header title="Documented limitations" subtitle="from /api/limitations, attached to this route" icon={AlertTriangle} />
+            <Card.Body className="grid gap-2.5 sm:grid-cols-2">
+              {Object.entries(plan.limitations ?? {}).map(([k, text]) => (
+                <div key={k} className="rounded-xl border border-warn/20 bg-warn/5 px-3.5 py-2.5">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-warn">{k}</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-white/85">{text}</p>
+                </div>
+              ))}
+            </Card.Body>
+          </Card>
+        </>
+      )}
 
-            <div className="mt-5 flex justify-end">
-              <Button onClick={() => setShowRiskModal(false)}>Close</Button>
-            </div>
+      {!sic.metadata && sic.status === 'error' && (
+        <div className="flex items-start gap-3 rounded-2xl border border-danger/40 bg-danger/10 px-5 py-4 text-danger">
+          <ServerCrash size={18} className="mt-0.5 shrink-0" />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold">AURORA backend unreachable</p>
+            <p className="text-xs leading-relaxed text-danger/90">{sic.error?.message}</p>
           </div>
         </div>
       )}
+
+      <div className="flex items-start gap-2.5 rounded-xl border border-white/5 bg-navy-deep/40 px-4 py-3">
+        <MapPin size={15} className="mt-0.5 shrink-0 text-mist" />
+        <p className="text-[11px] leading-relaxed text-mist">
+          This is a research prototype. A returned route is validated (in bounds, contiguous,
+          goal-reaching, free of non-navigable cells) but is not a navigational product: real
+          Antarctic transits require verified charting, ice-pilot judgement and vessel-specific
+          limits that are not part of this system.
+        </p>
+      </div>
     </div>
   )
 }

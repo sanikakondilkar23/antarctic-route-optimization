@@ -9,24 +9,25 @@ export function Toggle({ checked, onChange, label, description, disabled }) {
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'flex w-full items-center justify-between gap-4 rounded-xl border border-white/5 bg-navy-deep/50 px-4 py-3 text-left transition',
-        !disabled && 'hover:border-white/10'
+        'flex w-full items-start justify-between gap-4 border border-graphite-600 bg-graphite-800 px-3 py-2.5 text-left transition',
+        !disabled && 'hover:border-graphite-500',
+        disabled && 'cursor-not-allowed opacity-55'
       )}
     >
-      <span>
-        {label && <span className="block text-sm font-medium text-white/85">{label}</span>}
-        {description && <span className="mt-0.5 block text-xs text-mist">{description}</span>}
+      <span className="min-w-0">
+        {label && <span className="block text-[12.5px] font-medium leading-snug text-white/90">{label}</span>}
+        {description && <span className="mt-0.5 block text-[11px] leading-snug text-steel">{description}</span>}
       </span>
       <span
         className={cn(
-          'relative h-6 w-11 shrink-0 rounded-full transition',
-          checked ? 'bg-cyan' : 'bg-white/10'
+          'relative mt-0.5 h-4 w-8 shrink-0 rounded-full border transition-colors',
+          checked ? 'border-ice-dim bg-ice-dim/70' : 'border-graphite-500 bg-graphite-950'
         )}
       >
         <span
           className={cn(
-            'absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all',
-            checked ? 'left-[22px]' : 'left-0.5'
+            'absolute top-[1px] h-[12px] w-[12px] rounded-full transition-all',
+            checked ? 'left-[17px] bg-white' : 'left-[1px] bg-steel'
           )}
         />
       </span>
@@ -34,27 +35,23 @@ export function Toggle({ checked, onChange, label, description, disabled }) {
   )
 }
 
-export function SelectField({ label, value, onChange, options, hint, className = '' }) {
+export function SelectField({ label, value, onChange, options, hint, disabled, className = '' }) {
   return (
     <label className={cn('block', className)}>
       {label && <span className="input-label">{label}</span>}
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="input appearance-none pr-9"
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value} className="bg-navy-mid text-white">
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-mist" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </div>
-      {hint && <p className="mt-1 text-[11px] text-mist/70">{hint}</p>}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="select"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value} className="bg-graphite-850 text-white">
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {hint && <p className="mt-1 text-[11px] leading-snug text-steel">{hint}</p>}
     </label>
   )
 }
@@ -64,7 +61,25 @@ export function Field({ label, children, hint }) {
     <label className="block">
       {label && <span className="input-label">{label}</span>}
       {children}
-      {hint && <p className="mt-1 text-[11px] text-mist/70">{hint}</p>}
+      {hint && <p className="mt-1 text-[11px] leading-snug text-steel">{hint}</p>}
+    </label>
+  )
+}
+
+export function Checkbox({ checked, onChange, label, hint, disabled }) {
+  return (
+    <label className={cn('flex items-start gap-2 text-[12px] leading-snug', disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer')}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-[2px] h-3.5 w-3.5 shrink-0 rounded-[2px] border-graphite-500 bg-graphite-950 accent-ice"
+      />
+      <span>
+        <span className="text-white/85">{label}</span>
+        {hint && <span className="mt-0.5 block text-[11px] text-steel">{hint}</span>}
+      </span>
     </label>
   )
 }

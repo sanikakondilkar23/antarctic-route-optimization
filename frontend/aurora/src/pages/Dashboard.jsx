@@ -1,23 +1,28 @@
-import { useState } from 'react'
+/**
+ * Dashboard.jsx - AURORA operations dashboard.
+ *
+ * Every tile on this page is either a value the API returned, a documented
+ * limitation, or an empty state that says so. There are no simulated vessels,
+ * alerts, efficiencies or telemetry readings anywhere in this file.
+ */
+
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Ship,
-  Snowflake,
+  Activity,
   AlertTriangle,
-  RefreshCw,
+  ArrowUpRight,
+  CheckCircle2,
   Clock,
   Compass,
-  Waves,
-  Radar,
-  Route,
-  ArrowUpRight,
-  ShieldCheck,
-  CheckCircle2,
-  Activity,
-  Wind,
+  Database,
   Layers,
-  ChevronRight,
-  Check,
+  RefreshCw,
+  Route as RouteIcon,
+  ServerCrash,
+  Snowflake,
+  Waves,
+  XCircle,
 } from 'lucide-react'
 import PageHeader, { LiveChip } from '../components/ui/PageHeader'
 import StatCard from '../components/ui/StatCard'
@@ -25,464 +30,370 @@ import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import AntarcticMap from '../components/map/AntarcticMap'
+import MissionPlanner from '../components/mission/MissionPlanner'
+import SicLegend from '../components/sic/SicLegend'
 import { ChartCard, ChartTooltip } from '../components/charts'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from 'recharts'
 import useSicForecast from '../hooks/useSicForecast'
 import {
-  fleetStatusRows,
-  recentActivity,
-  nearbyIcebergDistance,
-  fmtTimestamp,
-} from '../data'
-import { cn } from '../lib/utils'
+  fetchHealth,
+  fetchLimitations,
+  fetchSystemStatus,
+  fetchUncertaintySummary,
+} from '../lib/auroraApi'
+import { fmtTimestamp } from '../data'
 
-const LIVE_ALERTS_FEED = [
-  { id: 'ALT-101', tone: 'danger', title: 'Iceberg cluster near Bharati corridor', detail: 'A-76A fragment within 12 NM · Immediate heading review advised', time: '14m ago', status: 'Active' },
-  { id: 'ALT-102', tone: 'warn', title: 'Sea-ice concentration threshold breach', detail: 'Prydz Bay coastal approach entering Close Pack (78%)', time: '38m ago', status: 'Active' },
-  { id: 'ALT-103', tone: 'mint', title: 'ACC Current velocity acceleration', detail: 'Circumpolar jet at 0.9 kn ENE favoring eastbound transit', time: '2h ago', status: 'Monitored' },
-]
+const pct = (v) => (typeof v === 'number' ? `${(v * 100).toFixed(1)}%` : '—')
+
+function AvailabilityRow({ label, ok, detail, okText = 'AVAILABLE', badText = 'UNAVAILABLE' }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-white/5 py-2 last:border-0">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-white/90">{label}</p>
+        {detail && <p className="mt-0.5 text-[11px] leading-snug text-mist">{detail}</p>}
+      </div>
+      {ok ? (
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-safe">
+          <CheckCircle2 size={13} /> {okText}
+        </span>
+      ) : (
+        <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-warn">
+          <XCircle size={13} /> {badText}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export default function Dashboard() {
-  const [updating, setUpdating] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState(fmtTimestamp())
-  const [activeCorridor, setActiveCorridor] = useState('cape-town-to-bharati')
-  const [alertsState, setAlertsState] = useState(LIVE_ALERTS_FEED)
-  const [toast, setToast] = useState(null)
-
-  // Real sea-ice layer from the SIC API. Null while loading or on error, in
-  // which case AntarcticMap keeps the original illustrative patches.
   const sic = useSicForecast()
-  const sicRaster = sic.active?.available ? { url: sic.active.url, bounds: sic.active.bounds } : null
-  const sicMeanPct =
-    sic.active?.stats?.kind === 'sic' ? `${(sic.active.stats.mean * 100).toFixed(1)}%` : null
-  const sicSeries = (sic.timeseries?.series ?? []).map((r) => ({
-    t: r.date?.slice(5) ?? '',
-    concentration: typeof r.forecast === 'number' ? r.forecast * 100 : null,
-  }))
+  const [health, setHealth] = useState(null)
+  const [system, setSystem] = useState(null)
+  const [limitations, setLimitations] = useState(null)
+  const [uncertainty, setUncertainty] = useState(null)
+  const [refreshedAt, setRefreshedAt] = useState(fmtTimestamp())
+  const [busy, setBusy] = useState(false)
 
-  const showToast = (msg) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3000)
-  }
+  const load = useCallback(async () => {
+    setBusy(true)
+    const results = await Promise.allSettled([
+      fetchHealth(),
+      fetchSystemStatus(),
+      fetchLimitations(),
+      fetchUncertaintySummary(),
+    ])
+    const [h, s, l, u] = results
+    if (h.status === 'fulfilled') setHealth(h.value)
+    if (s.status === 'fulfilled') setSystem(s.value)
+    if (l.status === 'fulfilled') setLimitations(l.value)
+    if (u.status === 'fulfilled') setUncertainty(u.value)
+    setRefreshedAt(fmtTimestamp())
+    setBusy(false)
+  }, [])
 
-  const refresh = () => {
-    setUpdating(true)
-    setTimeout(() => {
-      setLastUpdate(fmtTimestamp())
-      setUpdating(false)
-      showToast('Polar sensor telemetry refreshed from simulated stations')
-    }, 800)
-  }
+  useEffect(() => {
+    load()
+  }, [load])
 
-  const handleAck = (id) => {
-    setAlertsState((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: 'Acknowledged', tone: 'mint' } : a))
-    )
-    showToast(`Alert ${id} acknowledged by Bridge Watchstander`)
-  }
+  const sicRaster = sic.active?.available
+    ? { url: sic.active.url, bounds: sic.active.bounds, label: `SIC ${sic.date}` }
+    : null
+
+  const histData = uncertainty?.available
+    ? (uncertainty.histogram_counts ?? []).map((c, i) => ({
+        bin: Number(((uncertainty.histogram_bins?.[i] ?? 0) * 100).toFixed(1)),
+        count: c,
+      }))
+    : []
+
+  const env = system?.environment ?? {}
+  const models = system?.models ?? {}
+  const offline = health === null && sic.status === 'error'
 
   return (
     <div className="space-y-6">
-      {/* Cockpit Command Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-4">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-mint animate-ping" />
-            <span className="font-mono text-xs font-bold uppercase tracking-widest text-mint">
-              POLAR BRIDGE COMMAND COCKPIT
+            <span className="h-2 w-2 rounded-full bg-ice" />
+            <span className="font-mono text-xs font-bold uppercase tracking-widest text-mist">
+              {system ? `${system.project} · ${system.system}` : 'AURORA'}
             </span>
           </div>
           <h1 className="mt-1 font-display text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
-            Antarctic Tactical Operations
+            Antarctic operations dashboard
           </h1>
           <p className="mt-0.5 text-xs text-mist">
-            AI-Assisted Corridor Monitoring · Southern Ocean Sector (50°S–75°S) · Demo Environment
+            Real SIC forecast field, real A* routing, honest availability reporting.
           </p>
         </div>
-
         <div className="flex flex-wrap items-center gap-2.5">
           <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-abyssal-deck px-3.5 py-1.5 font-mono text-xs text-mist">
-            <Clock size={13} className="text-mint" />
-            <span>Sync: <strong className="text-white">{lastUpdate}</strong></span>
+            <Clock size={13} className="text-ice" />
+            <span>
+              Sync: <strong className="text-white">{refreshedAt}</strong>
+            </span>
           </div>
-          <Button onClick={refresh} disabled={updating} className="!py-1.5 !px-3.5 !text-xs font-bold">
-            <RefreshCw size={13} className={updating ? 'animate-spin' : ''} />
-            {updating ? 'Ingesting…' : 'Ingest Feeds'}
+          <Button onClick={() => { sic.refresh(); load() }} disabled={busy} className="!py-1.5 !px-3.5 !text-xs font-bold">
+            <RefreshCw size={13} className={busy || sic.status === 'loading' ? 'animate-spin' : ''} />
+            {busy ? 'Loading…' : 'Refresh'}
           </Button>
         </div>
       </div>
 
-      {toast && (
-        <div className="flex items-center justify-between rounded-xl border border-mint/40 bg-abyssal-card/95 px-4 py-2.5 text-xs text-mint shadow-glow">
-          <span className="font-semibold">{toast}</span>
-          <button onClick={() => setToast(null)} className="text-mist hover:text-white">✕</button>
+      {offline && (
+        <div className="flex items-start gap-3 rounded-2xl border border-danger/40 bg-danger/10 px-5 py-4 text-danger">
+          <ServerCrash size={18} className="mt-0.5 shrink-0" />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold">AURORA backend unreachable — no values are shown</p>
+            <p className="text-xs leading-relaxed text-danger/90">
+              Start it with <span className="font-mono">python backend/api/main.py</span> and reload.
+              Nothing on this page is substituted from demo data.
+            </p>
+          </div>
         </div>
       )}
 
-      {/* NEW FEATURE: Expedition Corridor Progress Strip */}
-      <div className="rounded-2xl border border-white/10 bg-abyssal-card/90 p-4 shadow-card">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 pb-3">
-          <div className="flex items-center gap-2">
-            <Compass size={16} className="text-mint" />
-            <span className="text-xs font-bold uppercase tracking-wider text-white">
-              Active Expedition Transit Corridors
-            </span>
-          </div>
-          <span className="font-mono text-[11px] text-mist">
-            Cape Town ➔ Bharati & Maitri Research Stations
-          </span>
-        </div>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          {/* Corridor 1: Bharati */}
-          <div
-            onClick={() => setActiveCorridor('cape-town-to-bharati')}
-            className={cn(
-              'cursor-pointer rounded-xl border p-3.5 transition-all',
-              activeCorridor === 'cape-town-to-bharati'
-                ? 'border-mint/50 bg-mint/5 shadow-sm'
-                : 'border-white/5 bg-abyssal/50 hover:border-white/20'
-            )}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-mint" />
-                <span className="font-bold text-white">Cape Town ➔ Bharati Station</span>
-              </div>
-              <span className="font-mono text-[11px] font-bold text-mint">52% NAVIGATED</span>
-            </div>
-
-            {/* Progress bar with vessel pip */}
-            <div className="relative mt-2.5 h-2 w-full rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-azure to-mint rounded-full" style={{ width: '52%' }} />
-            </div>
-
-            <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-mist">
-              <span>Navigated: <strong>2,818 / 5,420 km</strong></span>
-              <span>ETA: <strong>6.2 Days</strong></span>
-              <span className="text-azure">RV Bharati Explorer</span>
-            </div>
-          </div>
-
-          {/* Corridor 2: Maitri */}
-          <div
-            onClick={() => setActiveCorridor('cape-town-to-maitri')}
-            className={cn(
-              'cursor-pointer rounded-xl border p-3.5 transition-all',
-              activeCorridor === 'cape-town-to-maitri'
-                ? 'border-mint/50 bg-mint/5 shadow-sm'
-                : 'border-white/5 bg-abyssal/50 hover:border-white/20'
-            )}
-          >
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-azure" />
-                <span className="font-bold text-white">Cape Town ➔ Maitri Station</span>
-              </div>
-              <span className="font-mono text-[11px] font-bold text-azure">68% NAVIGATED</span>
-            </div>
-
-            {/* Progress bar */}
-            <div className="relative mt-2.5 h-2 w-full rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-azure-deep to-azure rounded-full" style={{ width: '68%' }} />
-            </div>
-
-            <div className="mt-2.5 flex items-center justify-between font-mono text-[11px] text-mist">
-              <span>Navigated: <strong>2,896 / 4,260 km</strong></span>
-              <span>ETA: <strong>3.1 Days</strong></span>
-              <span className="text-azure">RV Maitri Voyager</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Tactical Cockpit Grid */}
-      <div className="grid gap-5 xl:grid-cols-12">
-        {/* Left/Center: Tactical Theatre Polar Map (8 cols) */}
-        <div className="xl:col-span-8">
-          <Card className="card-tactical overflow-hidden h-full flex flex-col">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3.5 bg-abyssal-deck/70">
-              <div className="flex items-center gap-2.5">
-                <Compass size={18} className="text-mint" />
-                <div>
-                  <h3 className="text-sm font-bold text-white">Tactical Polar Theatre</h3>
-                  <p className="text-[11px] font-mono text-mist">
-                    Active Corridor: {activeCorridor === 'cape-town-to-bharati' ? 'Cape Town ➔ Bharati Station' : 'Cape Town ➔ Maitri Station'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/map"
-                  className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white hover:bg-white/10 hover:border-mint/30 transition"
-                >
-                  <Layers size={13} className="text-mint" /> Full Explorer
-                </Link>
-                <Link
-                  to="/route-planner"
-                  className="inline-flex items-center gap-1 rounded-lg border border-mint/30 bg-mint/10 px-2.5 py-1 text-xs font-bold text-mint hover:bg-mint/20 transition"
-                >
-                  <Route size={13} /> Route Engine
-                </Link>
-              </div>
-            </div>
-
-            {/* Tactical Map with floating HUD badges */}
-            <div className="relative flex-1 p-3">
-              {/* Floating on-map HUD bar */}
-              <div className="pointer-events-none absolute top-5 left-5 z-[500] flex flex-wrap gap-2">
-                <span className="rounded-lg border border-white/15 bg-abyssal-deck/90 px-2.5 py-1 font-mono text-[10px] font-bold text-white shadow-lg backdrop-blur">
-                  LAT/LON: 62°14'S, 58°40'E
-                </span>
-                <span className="rounded-lg border border-mint/30 bg-abyssal-deck/90 px-2.5 py-1 font-mono text-[10px] font-bold text-mint shadow-lg backdrop-blur">
-                  {sicMeanPct ? `SIC ${sicMeanPct} (MODEL)` : 'SIC: N/A'}
-                </span>
-                <span className="rounded-lg border border-warn/30 bg-abyssal-deck/90 px-2.5 py-1 font-mono text-[10px] font-bold text-warn shadow-lg backdrop-blur">
-                  WIND: 32 kn SSW
-                </span>
-              </div>
-
-              <AntarcticMap height={480} activeCorridor={activeCorridor} sicRaster={sicRaster} className="!rounded-xl border border-white/10" />
-
-              {/* Map Legend & Symbology Bar */}
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] font-mono text-mist">
-                <div className="flex flex-wrap items-center gap-4">
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-mint" /> Research Vessel</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-danger" /> Tabular Iceberg</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-3 bg-azure" /> Safe Corridor</span>
-                  <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-warn" /> Wind Barb</span>
-                </div>
-                <span className="text-[10px] text-mist/60">Cartographic Datum: WGS-84 Polar</span>
-              </div>
-            </div>
-          </Card>
-        </div>
-
-        {/* Right: AI Hazard & Risk Matrix Panel (4 cols) */}
-        <div className="xl:col-span-4 flex flex-col gap-4">
-          <Card className="card-tactical flex-1">
-            <Card.Header
-              title="Hazard & Risk Matrix"
-              subtitle="Real-time proximity warnings"
-              icon={Radar}
-              action={<span className="rounded-full bg-danger/20 border border-danger/40 px-2 py-0.5 font-mono text-[10px] font-bold text-danger">3 ACTIVE</span>}
-            />
-            <Card.Body className="space-y-3">
-              {alertsState.map((a) => (
-                <div
-                  key={a.id}
-                  className={cn(
-                    'rounded-xl border p-3 transition-all',
-                    a.status === 'Acknowledged'
-                      ? 'border-white/5 bg-white/2 opacity-70'
-                      : a.tone === 'danger'
-                      ? 'border-danger/30 bg-danger/5 hover:border-danger/50'
-                      : a.tone === 'warn'
-                      ? 'border-warn/30 bg-warn/5 hover:border-warn/50'
-                      : 'border-mint/30 bg-mint/5 hover:border-mint/50'
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className={cn('h-2 w-2 shrink-0 rounded-full', a.tone === 'danger' ? 'bg-danger' : a.tone === 'warn' ? 'bg-warn' : 'bg-mint')} />
-                      <span className="font-bold text-white">{a.title}</span>
-                    </div>
-                    <span className="font-mono text-[10px] text-mist shrink-0">{a.time}</span>
-                  </div>
-                  <p className="mt-1.5 text-xs text-mist leading-relaxed">{a.detail}</p>
-                  <div className="mt-2.5 flex items-center justify-between border-t border-white/5 pt-2">
-                    <span className="font-mono text-[10px] text-mist/70">{a.id}</span>
-                    {a.status === 'Active' ? (
-                      <button
-                        onClick={() => handleAck(a.id)}
-                        className="inline-flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold text-white hover:bg-mint hover:text-abyssal transition"
-                      >
-                        <Check size={11} /> Acknowledge
-                      </button>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-mono text-mint">
-                        <CheckCircle2 size={11} /> Acknowledged
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ))}
-
-              <Link to="/alerts" className="block pt-1">
-                <Button variant="secondary" className="w-full !py-2 !text-xs">
-                  Full Hazard Radar <ArrowUpRight size={13} />
-                </Button>
-              </Link>
-            </Card.Body>
-          </Card>
-
-          {/* Iceberg Proximity Radar Tile */}
-          <Card className="card-tactical p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Snowflake size={16} className="text-azure" />
-                <span className="text-xs font-bold uppercase text-white">Nearest Tracked Berg</span>
-              </div>
-              <span className="font-mono text-[11px] font-bold text-danger">14.2 NM Ahead</span>
-            </div>
-            <p className="mt-1.5 text-xs text-mist">
-              Tabular A-76A fragment drifting at 1.8 kn toward northeast corridor boundary.
-            </p>
-            <div className="mt-3 flex items-center justify-between font-mono text-[11px] border-t border-white/5 pt-2">
-              <span className="text-mist">Drift Vector: 038° (NE)</span>
-              <span className="text-mint">Collision Cone Clear</span>
-            </div>
-          </Card>
-        </div>
-      </div>
-
-      {/* 4 Instrument Metrics Tiles */}
+      {/* KPI tiles - API values only */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Tracked Vessels"
-          value="04"
-          subtitle="4 Active research expeditions"
-          icon={Ship}
-          tone="cyan"
-          note="FLEET_ONLINE"
-        />
-        <StatCard
-          label="Icebergs Monitored"
-          value="128"
-          subtitle="Tabular & pinnacled targets"
-          icon={Snowflake}
-          tone="ice"
-          note="SAR_RADAR"
-        />
-        <StatCard
-          label="Corridor Efficiency"
-          value="91.4%"
-          subtitle="Fuel & distance optimization score"
-          icon={Activity}
-          tone="safe"
-          trend="+3.2%"
-          note="AI_SCORE"
-        />
-        <StatCard
-          label="Hazard Alerts"
-          value="03"
-          subtitle="Proximity & pack threshold flags"
-          icon={AlertTriangle}
-          tone="warn"
-          note="ATTN_REQ"
-        />
-      </div>
-
-      {/* Charts & Fleet Telemetry Grid */}
-      <div className="grid gap-5 lg:grid-cols-2">
-        <ChartCard
-          title="Sea-Ice Concentration — ConvLSTM Forecast"
+          label="Forecast window"
+          value={sic.metadata ? `${sic.nTimesteps} d` : '—'}
           subtitle={
-            sic.status === 'ready'
-              ? `Day-1 ensemble mean over the model ROI · ${sicSeries.length} days · real model output`
-              : sic.status === 'error'
-                ? 'SIC API unavailable — no model data shown'
-                : 'Waiting for the SIC API'
+            sic.metadata
+              ? `${sic.metadata.date_range?.[0]} → ${sic.metadata.date_range?.[1]} (2026 SIC artifact)`
+              : 'metadata unavailable'
           }
-          action={
-            <span className="font-mono text-xs text-mint">
-              {sic.status === 'ready' ? 'Model ROI' : '—'}
-            </span>
+          icon={Database}
+          tone="ocean"
+          note={sic.metadata ? 'REAL FIELD' : 'UNAVAILABLE'}
+        />
+        <StatCard
+          label="Mean SIC (selected day)"
+          value={pct(sic.active?.stats?.mean)}
+          subtitle={sic.date ? `valid cells on ${sic.date}` : 'no frame loaded'}
+          icon={Waves}
+          tone="cyan"
+          note={sic.active?.available ? 'FORECAST' : 'UNAVAILABLE'}
+        />
+        <StatCard
+          label="ConvLSTM checkpoints"
+          value={
+            sic.checkpointSummary
+              ? `${sic.checkpointSummary.loaded}/${sic.checkpointSummary.expected}`
+              : '—'
           }
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={sicSeries} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-              <defs>
-                <linearGradient id="mintGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00F2C3" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#00F2C3" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" />
-              <XAxis dataKey="t" stroke="rgba(255,255,255,0.2)" tick={{ fill: '#94a3b8', fontSize: 11 }} minTickGap={28} />
-              <YAxis stroke="rgba(255,255,255,0.2)" tick={{ fill: '#94a3b8', fontSize: 11 }} unit="%" />
-              <Tooltip content={<ChartTooltip unit="%" />} />
-              <Area type="monotone" dataKey="concentration" name="Sea-Ice Concentration" stroke="#00F2C3" strokeWidth={2.5} fill="url(#mintGrad)" dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard
-          title="Nearest Iceberg Distance"
-          subtitle="Simulated distance to closest tracked hazard along corridor (km)"
-          action={<span className="font-mono text-xs text-azure">Berg A-76A</span>}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={nearbyIcebergDistance} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-              <defs>
-                <linearGradient id="azureGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#38BDF8" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#38BDF8" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" />
-              <XAxis dataKey="t" stroke="rgba(255,255,255,0.2)" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-              <YAxis stroke="rgba(255,255,255,0.2)" tick={{ fill: '#94a3b8', fontSize: 11 }} unit=" km" />
-              <Tooltip content={<ChartTooltip unit=" km" />} />
-              <Area type="monotone" dataKey="distance" name="Iceberg Distance" stroke="#38BDF8" strokeWidth={2.5} fill="url(#azureGrad)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartCard>
+          subtitle={
+            sic.checkpointSummary
+              ? `${sic.checkpointSummary.architecture ?? 'ensemble'} · ${sic.checkpointSummary.parameters?.toLocaleString()} params`
+              : 'ensemble report unavailable'
+          }
+          icon={Snowflake}
+          tone={sic.checkpointSummary?.loaded === sic.checkpointSummary?.expected ? 'safe' : 'warn'}
+          note={sic.checkpointSummary?.inferenceRerunPossible ? 'INFERENCE LIVE' : 'COMMITTED OUTPUT'}
+        />
+        <StatCard
+          label="Backend"
+          value={health?.status === 'ok' ? 'ONLINE' : 'OFFLINE'}
+          subtitle={
+            health
+              ? `SIC artifact ${health.sic_artifact ? 'present' : 'missing'} · route artifact ${
+                  health.route_artifact ? 'present' : 'missing'
+                }`
+              : 'no response from /api/health'
+          }
+          icon={Activity}
+          tone={health?.status === 'ok' ? 'safe' : 'danger'}
+          note={health ? 'HEALTH ENDPOINT' : 'UNAVAILABLE'}
+        />
       </div>
 
-      {/* Fleet Telemetry Table */}
-      <Card className="card-tactical overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4 bg-abyssal-deck/70">
-          <div className="flex items-center gap-2.5">
-            <Ship size={18} className="text-mint" />
-            <div>
-              <h3 className="text-sm font-bold text-white">Fleet Telemetry & Status</h3>
-              <p className="text-[11px] text-mist">Live vessel positions, headings, and ice exposure</p>
+      <div className="grid gap-5 xl:grid-cols-12">
+        <div className="xl:col-span-7">
+          <Card className="overflow-hidden h-full">
+            <Card.Header
+              title="Southern Ocean theatre"
+              subtitle={
+                sicRaster
+                  ? `Real SIC raster · ${sic.date} · ${sic.active.legend?.units ?? ''}`
+                  : 'SIC raster not loaded'
+              }
+              icon={Compass}
+              action={
+                <div className="flex items-center gap-2">
+                  <Link
+                    to="/sea-ice"
+                    className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white hover:border-ice/40 transition"
+                  >
+                    <Layers size={13} /> Forecast
+                  </Link>
+                  <Link
+                    to="/route-planner"
+                    className="inline-flex items-center gap-1 rounded-lg border border-ice/30 bg-ice/10 px-2.5 py-1 text-xs font-bold text-ice hover:bg-ice/20 transition"
+                  >
+                    <RouteIcon size={13} /> Route Optimizer
+                  </Link>
+                </div>
+              }
+            />
+            <div className="p-3">
+              <AntarcticMap
+                height={440}
+                sicRaster={sicRaster}
+                showSeaIce={Boolean(sicRaster)}
+                className="!rounded-xl border border-white/10"
+              />
             </div>
-          </div>
-          <Link to="/fleet" className="inline-flex items-center gap-1 font-mono text-xs font-bold text-mint hover:underline">
-            Manage Fleet Roster <ChevronRight size={13} />
-          </Link>
+            <div className="border-t border-white/5 px-5 py-3">
+              {sicRaster ? (
+                <SicLegend legend={sic.active.legend} stats={sic.active.stats} />
+              ) : (
+                <p className="text-[11px] leading-relaxed text-warn">
+                  {sic.status === 'error'
+                    ? `SIC unavailable: ${sic.error?.message}`
+                    : 'Loading the real concentration field — no placeholder is drawn meanwhile.'}
+                </p>
+              )}
+            </div>
+          </Card>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-white/10 bg-abyssal/40">
-                <th className="th">Vessel Name</th>
-                <th className="th">Current Sector</th>
-                <th className="th">Mission Status</th>
-                <th className="th">Speed</th>
-                <th className="th hidden sm:table-cell">Winds</th>
-                <th className="th text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fleetStatusRows.map((v) => (
-                <tr key={v.name} className="border-b border-white/5 last:border-0 hover:bg-white/2 transition">
-                  <td className="td">
-                    <p className="font-bold text-white">{v.name}</p>
-                    <p className="font-mono text-[10px] text-mist">IMO 982103 · Polar Class 4</p>
-                  </td>
-                  <td className="td font-mono">{v.sector}</td>
-                  <td className="td"><Badge value={v.status} /></td>
-                  <td className="td font-mono font-bold text-mint">{v.speed}</td>
-                  <td className="td hidden font-mono text-mist sm:table-cell">{v.winds}</td>
-                  <td className="td text-right">
-                    <Link
-                      to="/fleet"
-                      className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-semibold text-white hover:bg-mint hover:text-abyssal transition"
-                    >
-                      Track <ArrowUpRight size={11} />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="xl:col-span-5 space-y-4">
+          <MissionPlanner metadata={sic.metadata} />
         </div>
-      </Card>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <Card.Header
+            title="Data & model availability"
+            subtitle="exactly what this deployment can serve"
+            icon={Database}
+            action={
+              system ? (
+                <LiveChip label={system.retraining_performed ? 'retrained' : 'no retraining'} dot={system.retraining_performed ? 'warn' : 'safe'} />
+              ) : null
+            }
+          />
+          <Card.Body>
+            {!system ? (
+              <p className="text-xs text-mist">Waiting for /api/system/status…</p>
+            ) : (
+              <>
+                <AvailabilityRow
+                  label="Sea-ice concentration"
+                  ok={env.sic?.available}
+                  detail={`${env.sic?.label} · ${env.sic?.n_timesteps} steps · ${env.sic?.grid?.join('×')} @ ${env.sic?.resolution_deg}°`}
+                />
+                <AvailabilityRow
+                  label="Forecast uncertainty"
+                  ok={Boolean(env.sic?.uncertainty_shape) || Boolean(uncertainty?.available)}
+                  detail={
+                    env.sic?.uncertainty_shape
+                      ? `shape ${env.sic.uncertainty_shape.join('×')} · ${env.sic.uncertainty_horizons} horizons · committed artifact`
+                      : 'committed uncertainty artifact'
+                  }
+                />
+                <AvailabilityRow
+                  label="Ocean currents (CMEMS)"
+                  ok={env.cmems?.available}
+                  detail={env.cmems?.label}
+                />
+                <AvailabilityRow
+                  label="Iceberg risk layer"
+                  ok={env.iceberg?.available}
+                  detail={env.iceberg?.label}
+                />
+                <AvailabilityRow
+                  label="Route ML policy"
+                  ok={Boolean(models.route_policy?.present)}
+                  detail={
+                    models.route_policy
+                      ? `${models.route_policy.training_data} · used for final route: ${models.route_policy.used_for_final_route}`
+                      : 'not discovered'
+                  }
+                />
+                <div className="mt-2 rounded-xl border border-ice/20 bg-ice/5 px-3 py-2">
+                  <p className="text-[11px] leading-relaxed text-white/85">
+                    <span className="font-semibold">Retraining:</span>{' '}
+                    {system.retraining_performed
+                      ? 'retraining was performed for this run.'
+                      : 'none — only the repository\'s pre-trained checkpoints are used, and no metric is re-computed.'}{' '}
+                    <span className="text-mist">synthetic route data used: </span>
+                    <span className={system.synthetic_route_data_used ? 'text-warn' : 'text-safe'}>
+                      {String(system.synthetic_route_data_used)}
+                    </span>
+                    .
+                  </p>
+                </div>
+              </>
+            )}
+          </Card.Body>
+        </Card>
+
+        <div className="space-y-4">
+          <ChartCard
+            title="Forecast uncertainty distribution"
+            subtitle={
+              uncertainty?.available
+                ? `committed artifact · ${uncertainty.source}`
+                : 'uncertainty summary unavailable'
+            }
+            action={<Badge value={uncertainty?.available ? 'Real output' : 'Unavailable'} />}
+            height={200}
+          >
+            {histData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={histData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid stroke="rgba(148,163,184,0.08)" strokeDasharray="4 4" />
+                  <XAxis
+                    dataKey="bin"
+                    stroke="rgba(148,163,184,0.4)"
+                    tick={{ fill: '#7c8ea6', fontSize: 10 }}
+                    label={{ value: '1σ spread (SIC %)', position: 'insideBottom', offset: -2, fill: '#7c8ea6', fontSize: 10 }}
+                  />
+                  <YAxis stroke="rgba(148,163,184,0.4)" tick={{ fill: '#7c8ea6', fontSize: 10 }} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Bar dataKey="count" name="cells" fill="#7DD3FC" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="pt-6 text-center text-xs text-mist">
+                DATA UNAVAILABLE — no uncertainty histogram is served.
+              </p>
+            )}
+          </ChartCard>
+
+          <Card>
+            <Card.Header
+              title="Documented limitations"
+              subtitle="GET /api/limitations"
+              icon={AlertTriangle}
+              action={<Link to="/system-status" className="text-xs font-semibold text-ice hover:underline">Full status</Link>}
+            />
+            <Card.Body className="grid gap-2 sm:grid-cols-2">
+              {limitations
+                ? Object.entries(limitations).map(([k, text]) => (
+                    <div key={k} className="rounded-xl border border-warn/20 bg-warn/5 px-3 py-2">
+                      <p className="font-mono text-[10px] uppercase tracking-wider text-warn">{k}</p>
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-white/85">{text}</p>
+                    </div>
+                  ))
+                : <p className="text-xs text-mist">Waiting for /api/limitations…</p>}
+            </Card.Body>
+          </Card>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-2.5 rounded-xl border border-white/5 bg-navy-deep/40 px-4 py-3">
+        <AlertTriangle size={15} className="mt-0.5 shrink-0 text-mist" />
+        <p className="text-[11px] leading-relaxed text-mist">
+          This prototype serves only what the repository actually contains: a committed 2026 SIC
+          forecast field, its uncertainty artifact, and A* route optimisation over them. Vessel
+          tracking, iceberg positions, wind and current fields are <strong>not</strong> served and are
+          therefore not shown.
+        </p>
+      </div>
     </div>
   )
 }
